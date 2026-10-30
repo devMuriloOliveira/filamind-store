@@ -1,0 +1,17 @@
+{
+  "name": "filamind-offers-api",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test",
+    "db:init": "node scripts/init-schema.js",
+    "db:import": "node scripts/import-catalog.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "pg": "8.21.0"
+  }
+}
