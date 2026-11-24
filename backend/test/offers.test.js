@@ -165,8 +165,54 @@ test('pagination returns twelve offers per page without dropping the next page',
   assert.equal(first.items.length, 12)
   assert.equal(second.items.length, 1)
   assert.notEqual(first.items[0].id, second.items[0].id)
+  data.offers[0].availability = 'unavailable'
+  data.offers[0].availabilityConfirmedAt = now
+  const filtered = listPublicOffers(data, new URLSearchParams('marketplace=shopee&page=2'))
+  assert.equal(filtered.total, 12)
+  assert.equal(filtered.pages, 1)
+  assert.equal(filtered.page, 1)
+  data.offers[0].availability = 'available'
   data.offers[0].affiliateUrl = 'javascript:alert(1)'
   assert.equal(listPublicOffers(data, new URLSearchParams()).total, 12)
+})
+
+test('availability controls public visibility without changing administrative status', async () => {
+  await withServer(async (req) => req.headers.authorization === 'Bearer test-admin', async (call) => {
+    const created = await call('/api/admin/products', 'POST', product)
+    const productId = created.body.id
+    const now = new Date().toISOString()
+    const available = await call('/api/admin/offers', 'POST', { ...offer(productId, 'shopee', 'https://s.shopee.com.br/available'), availability: 'available', availabilityConfirmedAt: now })
+    const unavailable = await call('/api/admin/offers', 'POST', { ...offer(productId, 'mercado_livre', 'https://www.mercadolivre.com.br/unavailable'), availability: 'unavailable', availabilityConfirmedAt: now })
+    const unknown = await call('/api/admin/offers', 'POST', offer(productId, 'amazon', 'https://www.amazon.com.br/unknown'))
+    assert.equal(available.status, 201)
+    assert.equal(unavailable.status, 201)
+    assert.equal(unknown.status, 201)
+    assert.equal((await call('/api/offers')).body.total, 2)
+    assert.equal((await call('/api/offers?marketplace=mercado_livre')).body.total, 0)
+    assert.equal((await call('/api/admin/offers?marketplace=mercado_livre')).body.total, 1)
+    assert.equal((await call('/api/admin/offers?status=active')).body.total, 3)
+
+    const failure = await call(`/api/admin/offers/${available.body.id}`, 'PUT', { ...available.body, syncErrorAt: now })
+    assert.equal(failure.status, 200)
+    assert.equal((await call('/api/offers?marketplace=shopee')).body.items[0].availability, 'available')
+    const restocked = await call(`/api/admin/offers/${unavailable.body.id}`, 'PUT', { ...unavailable.body, availability: 'available', availabilityConfirmedAt: now })
+    assert.equal(restocked.status, 200)
+    assert.equal((await call('/api/offers?marketplace=mercado_livre')).body.total, 1)
+    assert.equal((await call(`/api/admin/products/${productId}`, 'PUT', { ...created.body, active: false })).status, 200)
+    assert.equal((await call('/api/offers')).body.total, 0)
+    assert.equal((await call(`/api/admin/products/${productId}`, 'PUT', { ...created.body, active: true })).status, 200)
+    assert.equal((await call('/api/offers?marketplace=mercado_livre')).body.total, 1)
+    assert.equal((await call(`/api/admin/offers/${unavailable.body.id}`, 'PUT', { ...restocked.body, active: false })).status, 200)
+    assert.equal((await call('/api/offers?marketplace=mercado_livre')).body.total, 0)
+    assert.equal((await call(`/api/admin/offers/${unknown.body.id}`, 'DELETE')).status, 200)
+    assert.equal((await call('/api/offers?marketplace=amazon')).body.total, 0)
+
+    const snapshot = (await call('/api/admin/catalog')).body
+    const stale = listPublicOffers({ ...snapshot, offers: [{ ...unavailable.body, availabilityConfirmedAt: new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString() }] }, new URLSearchParams())
+    assert.equal(stale.total, 1)
+    assert.equal(stale.items[0].availability, 'unknown')
+    assert.equal((await call(`/api/admin/offers/${available.body.id}`, 'PUT', { ...available.body, availabilityConfirmedAt: 'invalid' })).status, 400)
+  })
 })
 
 test('admin prevents duplicate products and links while preserving edits', async () => {

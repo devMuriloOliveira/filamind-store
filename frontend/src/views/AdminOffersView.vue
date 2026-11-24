@@ -7,6 +7,12 @@ const status = ref('loading')
 const message = ref('')
 const localMode = ref(false)
 const loginCode = ref('')
+const loginEmail = ref('')
+const loginPassword = ref('')
+const showPassword = ref(false)
+const loginBusy = ref(false)
+const logoutBusy = ref(false)
+const csrfToken = ref('')
 const catalog = ref({ products: [], offers: [] })
 const summary = ref(null)
 const productPage = ref(1)
@@ -33,20 +39,56 @@ let imageReader = null
 let imageSelection = 0
 const product = reactive({ name: '', description: '', category: 'Filamentos', keywords: '', imageUrl: '', imageRightsSource: '', featured: false, active: false })
 const offer = reactive({ productId: '', marketplace: 'mercado_livre', affiliateUrl: '', affiliateConfirmed: false, active: false, price: '', priceDisplayAuthorized: false, priceSource: '', priceUpdatedAt: '', availability: 'unknown', availabilityConfirmedAt: '' })
+const originalOfferDates = { priceUpdatedAt: null, availabilityConfirmedAt: null }
+let loadRevision = 0
+function clearSession() {
+  loadRevision++
+  csrfToken.value = ''
+  loginCode.value = ''
+  loginPassword.value = ''
+  showPassword.value = false
+  catalog.value = { products: [], offers: [] }
+  summary.value = null
+  productChoices.value = []
+  status.value = 'login'
+  resetProduct()
+  resetOffer()
+}
+const pad = (value) => String(value).padStart(2, '0')
+function toLocalDateTime(value) {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+function toUtcDateTime(value, original, label) {
+  if (!value) return null
+  if (original && value === toLocalDateTime(original)) return original
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value)) throw new Error(`${label} inválida.`)
+  const [year, month, day, hour, minute] = value.match(/\d+/g).map(Number)
+  const date = new Date(year, month - 1, day, hour, minute)
+  if (date.getFullYear() !== year || date.getMonth() + 1 !== month || date.getDate() !== day || date.getHours() !== hour || date.getMinutes() !== minute) throw new Error(`${label} inválida.`)
+  return date.toISOString()
+}
 async function request(path, options = {}) {
   let response
-  try { response = await fetch(path, { credentials: 'same-origin', ...options, headers: { 'Content-Type': 'application/json', ...options.headers } }) }
+  const mutating = options.method && !['GET', 'HEAD'].includes(options.method)
+  const headers = { 'Content-Type': 'application/json', ...options.headers }
+  if (mutating && !localMode.value && path !== '/api/admin/login' && csrfToken.value) headers['X-CSRF-Token'] = csrfToken.value
+  try { response = await fetch(path, { credentials: 'same-origin', ...options, headers }) }
   catch { throw new Error('Falha de conexão. Confira o servidor e tente novamente.') }
   let body
   try { body = await response.json() }
   catch { throw new Error('Resposta inesperada do servidor. Tente novamente.') }
   if (!response.ok) {
-    if (response.status === 401 && path !== '/api/admin/login') status.value = 'login'
+    if (response.status === 401 && path !== '/api/admin/login') {
+      clearSession()
+      throw new Error('Sua sessão expirou. Entre novamente para continuar.')
+    }
     throw new Error(body.error || 'Não foi possível concluir a operação.')
   }
   return body
 }
-let loadRevision = 0
 async function load() {
   const revision = ++loadRevision
   const filters = new URLSearchParams({ q: search.value, category: categoryFilter.value, marketplace: marketplaceFilter.value, status: statusFilter.value })
@@ -55,7 +97,7 @@ async function load() {
     request(`/api/admin/products?${filters}&page=${productPage.value}`),
     request(`/api/admin/offers?${filters}&page=${offerPage.value}`),
   ])
-  if (revision !== loadRevision) return
+  if (revision !== loadRevision || status.value !== 'authorized') return
   summary.value = stats
   catalog.value = { products: products.items, offers: offers.items }
   Object.assign(pages, { products: products.pages, offers: offers.pages })
@@ -65,6 +107,7 @@ async function load() {
 }
 async function loadProductChoices() {
   const response = await request(`/api/admin/products?q=${encodeURIComponent(productSearch.value)}&page=1`)
+  if (status.value !== 'authorized') return
   const selected = productChoices.value.find((item) => item.id === offer.productId)
   productChoices.value = selected && !response.items.some((item) => item.id === selected.id) ? [selected, ...response.items] : response.items
 }
@@ -90,27 +133,44 @@ onMounted(async () => {
     const response = await fetch('/api/admin/status', { credentials: 'same-origin' })
     const access = await response.json()
     localMode.value = access.localAdmin === true
-    if (response.status === 401 && access.localLogin === true) status.value = 'login'
-    else if (response.ok && access.authorized === true) { status.value = 'authorized'; await Promise.all([load(), loadProductChoices()]) }
+    if (response.status === 401) status.value = 'login'
+    else if (response.ok && access.authorized === true) {
+      if (!localMode.value && typeof access.csrfToken !== 'string') throw new Error('Token de segurança indisponível. Atualize a página e tente novamente.')
+      csrfToken.value = localMode.value ? '' : access.csrfToken
+      status.value = 'authorized'
+      await Promise.all([load(), loadProductChoices()])
+    }
     else throw new Error(access.error || 'Acesso administrativo indisponível.')
-  } catch (error) { if (status.value !== 'login') status.value = 'unavailable'; message.value = error.message }
+  } catch (error) { if (status.value !== 'login') status.value = 'unavailable'; message.value = error instanceof TypeError ? 'Falha de conexão. Confira o servidor e tente novamente.' : error.message }
 })
 async function login() {
+  if (loginBusy.value) return
   message.value = ''
+  if (!localMode.value) {
+    if (!loginEmail.value.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(loginEmail.value.trim())) { message.value = 'Informe um e-mail válido.'; return }
+    if (!loginPassword.value) { message.value = 'Informe a senha.'; return }
+  }
+  loginBusy.value = true
   try {
-    await request('/api/admin/login', { method: 'POST', body: JSON.stringify({ code: loginCode.value }) })
+    const access = await request('/api/admin/login', { method: 'POST', body: JSON.stringify(localMode.value ? { code: loginCode.value } : { email: loginEmail.value.trim(), password: loginPassword.value }) })
+    if (!localMode.value && typeof access.csrfToken !== 'string') throw new Error('Token de segurança indisponível. Atualize a página e tente novamente.')
+    csrfToken.value = localMode.value ? '' : access.csrfToken
     loginCode.value = ''
+    loginPassword.value = ''
     status.value = 'authorized'
     await Promise.all([load(), loadProductChoices()])
   } catch (error) { message.value = error.message }
+  finally { loginBusy.value = false }
 }
 async function logout() {
+  if (logoutBusy.value) return
+  logoutBusy.value = true
   try {
     await request('/api/admin/logout', { method: 'POST' })
-    catalog.value = { products: [], offers: [] }; summary.value = null; productChoices.value = []
-    status.value = 'login'
+    clearSession()
     message.value = ''
   } catch (error) { message.value = error.message }
+  finally { logoutBusy.value = false }
 }
 const clearSelectedImage = () => {
   imageSelection++
@@ -124,8 +184,10 @@ const clearSelectedImage = () => {
 }
 onUnmounted(clearSelectedImage)
 const resetProduct = () => { clearSelectedImage(); imageMessage.value = ''; imagePreviewFailed.value = false; productId.value = ''; Object.assign(product, { name: '', description: '', category: 'Filamentos', keywords: '', imageUrl: '', imageRightsSource: '', featured: false, active: false }) }
-const resetOffer = () => { offerId.value = ''; Object.assign(offer, { productId: '', marketplace: 'mercado_livre', affiliateUrl: '', affiliateConfirmed: false, active: false, price: '', priceDisplayAuthorized: false, priceSource: '', priceUpdatedAt: '', availability: 'unknown', availabilityConfirmedAt: '' }) }
+const resetOffer = () => { offerId.value = ''; originalOfferDates.priceUpdatedAt = null; originalOfferDates.availabilityConfirmedAt = null; Object.assign(offer, { productId: '', marketplace: 'mercado_livre', affiliateUrl: '', affiliateConfirmed: false, active: false, price: '', priceDisplayAuthorized: false, priceSource: '', priceUpdatedAt: '', availability: 'unknown', availabilityConfirmedAt: '' }) }
 const onMarketplaceChange = () => {
+  originalOfferDates.priceUpdatedAt = null
+  originalOfferDates.availabilityConfirmedAt = null
   offer.affiliateUrl = ''
   offer.affiliateConfirmed = false
   offer.price = ''
@@ -136,7 +198,7 @@ const onMarketplaceChange = () => {
   offer.availabilityConfirmedAt = ''
 }
 const editProduct = (item) => { clearSelectedImage(); imagePreviewFailed.value = false; imageMessage.value = item.imageUrl ? 'Imagem já cadastrada. Selecione outra para substituir.' : 'Este produto ainda não tem imagem cadastrada.'; productId.value = item.id; Object.assign(product, item, { keywords: item.keywords.join(', ') }); window.scrollTo({ top: 0, behavior: 'smooth' }) }
-const editOffer = (item) => { offerId.value = item.id; if (!productChoices.value.some((p) => p.id === item.productId)) productChoices.value = [{ id: item.productId, name: item.productName }, ...productChoices.value]; Object.assign(offer, item, { price: item.priceCents === null ? '' : String(item.priceCents / 100), priceUpdatedAt: item.priceUpdatedAt ? item.priceUpdatedAt.slice(0, 16) : '', availabilityConfirmedAt: item.availabilityConfirmedAt ? item.availabilityConfirmedAt.slice(0, 16) : '' }); window.scrollTo({ top: 0, behavior: 'smooth' }) }
+const editOffer = (item) => { offerId.value = item.id; originalOfferDates.priceUpdatedAt = item.priceUpdatedAt; originalOfferDates.availabilityConfirmedAt = item.availabilityConfirmedAt; if (!productChoices.value.some((p) => p.id === item.productId)) productChoices.value = [{ id: item.productId, name: item.productName }, ...productChoices.value]; Object.assign(offer, item, { price: item.priceCents === null ? '' : String(item.priceCents / 100), priceUpdatedAt: toLocalDateTime(item.priceUpdatedAt), availabilityConfirmedAt: toLocalDateTime(item.availabilityConfirmedAt) }); window.scrollTo({ top: 0, behavior: 'smooth' }) }
 
 async function saveProduct() {
   message.value = ''
@@ -152,7 +214,7 @@ async function saveOffer() {
   try {
     if (offer.price && !offer.priceUpdatedAt) throw new Error('Informe a data de atualização do preço.')
     if (offer.availability !== 'unknown' && !offer.availabilityConfirmedAt) throw new Error('Informe a data de confirmação da disponibilidade.')
-    const body = { ...offer, priceCents: offer.marketplace !== 'amazon' && offer.price !== '' ? Math.round(Number(offer.price) * 100) : null, priceUpdatedAt: offer.price ? new Date(offer.priceUpdatedAt).toISOString() : null, availabilityConfirmedAt: offer.availability !== 'unknown' ? new Date(offer.availabilityConfirmedAt).toISOString() : null }
+    const body = { ...offer, priceCents: offer.marketplace !== 'amazon' && offer.price !== '' ? Math.round(Number(offer.price) * 100) : null, priceUpdatedAt: offer.price ? toUtcDateTime(offer.priceUpdatedAt, originalOfferDates.priceUpdatedAt, 'Data do preço') : null, availabilityConfirmedAt: offer.availability !== 'unknown' ? toUtcDateTime(offer.availabilityConfirmedAt, originalOfferDates.availabilityConfirmedAt, 'Data da disponibilidade') : null }
     delete body.price
     await request(offerId.value ? `/api/admin/offers/${offerId.value}` : '/api/admin/offers', { method: offerId.value ? 'PUT' : 'POST', body: JSON.stringify(body) })
     resetOffer(); await load(); message.value = 'Oferta salva.'
@@ -234,17 +296,22 @@ async function uploadImage() {
   <main id="conteudo" class="admin-offers-main page-container">
     <p class="eyebrow">ADMINISTRAÇÃO COMERCIAL</p><h1>Gerenciar ofertas</h1>
     <p v-if="status === 'loading'" role="status">Verificando permissão administrativa…</p>
-    <div v-else-if="status === 'unavailable'" class="admin-offers-notice" role="status"><h2>Acesso administrativo indisponível</h2><p>{{ message }}</p><p>A integração com a autenticação do sistema principal será definida antes de habilitar cadastros. Nenhum usuário PRO recebe acesso automaticamente.</p></div>
-    <form v-else-if="status === 'login'" class="admin-offers-panel admin-offers-login" @submit.prevent="login">
-      <h2>Acesso local de desenvolvimento</h2>
-      <p>Digite o código temporário exibido no terminal que iniciou o servidor. Ele vale apenas neste computador e nesta execução.</p>
-      <label>Código temporário <input v-model="loginCode" type="password" autocomplete="one-time-code" required autofocus></label>
+    <div v-else-if="status === 'unavailable'" class="admin-offers-notice" role="status"><h2>Acesso administrativo indisponível</h2><p>{{ message }}</p><p>Verifique se o backend comercial e a autenticação administrativa estão disponíveis. Nenhum usuário PRO recebe acesso automaticamente.</p></div>
+    <form v-else-if="status === 'login'" class="admin-offers-panel admin-offers-login" :novalidate="!localMode" :aria-busy="loginBusy" @submit.prevent="login">
+      <h2>{{ localMode ? 'Acesso local de desenvolvimento' : 'Acesso administrativo' }}</h2>
+      <p v-if="localMode">Digite o código temporário exibido no terminal que iniciou o servidor. Ele vale apenas neste computador e nesta execução.</p>
+      <p v-else>Entre com o e-mail e a senha da sua conta administrativa.</p>
+      <label v-if="localMode">Código temporário <input v-model="loginCode" type="password" autocomplete="one-time-code" :disabled="loginBusy" required autofocus></label>
+      <template v-else>
+        <label>E-mail <input v-model="loginEmail" type="email" autocomplete="username" inputmode="email" maxlength="254" :disabled="loginBusy" required autofocus></label>
+        <div class="admin-offers-password-field"><label for="admin-login-password">Senha</label><span class="admin-offers-password"><input id="admin-login-password" v-model="loginPassword" :type="showPassword ? 'text' : 'password'" autocomplete="current-password" :disabled="loginBusy" required><button type="button" :aria-label="showPassword ? 'Ocultar senha' : 'Mostrar senha'" :aria-pressed="showPassword" :disabled="loginBusy" @click="showPassword = !showPassword">{{ showPassword ? 'Ocultar' : 'Mostrar' }}</button></span></div>
+      </template>
       <p v-if="message" class="admin-offers-message" role="alert">{{ message }}</p>
-      <button class="button button-primary" type="submit">Acessar painel</button>
+      <button class="button button-primary" type="submit" :disabled="loginBusy">{{ loginBusy ? 'Entrando…' : localMode ? 'Acessar painel' : 'Entrar' }}</button>
     </form>
     <template v-else>
       <p class="admin-offers-notice">Cadastre apenas produtos reais, imagens autorizadas e links gerados nos programas de afiliados. Ative produto e oferta para aparecerem na página pública.</p>
-      <button v-if="localMode" class="button button-secondary admin-offers-logout" type="button" @click="logout">Encerrar acesso local</button>
+      <button class="button button-secondary admin-offers-logout" type="button" :disabled="logoutBusy" @click="logout">{{ logoutBusy ? 'Encerrando…' : localMode ? 'Encerrar acesso local' : 'Sair da conta' }}</button>
       <p class="admin-offers-message" role="status">{{ message }}</p>
       <section v-if="summary" class="admin-offers-summary" aria-label="Resumo do catálogo">
         <div><strong>{{ summary.products }}</strong><span>Produtos</span></div>

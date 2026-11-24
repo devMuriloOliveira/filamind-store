@@ -9,10 +9,10 @@ import RefundView from '../views/RefundView.vue'
 async function canOpenAdmin() {
   try {
     const response = await fetch('/api/admin/status', { credentials: 'same-origin' })
-    if ((!response.ok && response.status !== 401) || !response.headers.get('content-type')?.includes('application/json')) return '/'
+    if (!response.headers.get('content-type')?.includes('application/json')) return true
     const body = await response.json()
-    return body.authorized === true || (response.status === 401 && body.localLogin === true) ? true : '/'
-  } catch { return '/' }
+    return body.authorized === true || response.status === 401 ? true : '/'
+  } catch { return true }
 }
 
 const routes = [

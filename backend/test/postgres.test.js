@@ -7,6 +7,7 @@ import { createOffersServer } from '../src/server.js'
 import { createPostgresPool, createPostgresRepository } from '../src/postgresRepository.js'
 import { initializeSchema } from '../scripts/init-schema.js'
 import { importCatalog, prepareCatalogImport } from '../scripts/import-catalog.js'
+import { listPublicOffers } from '../src/catalog.js'
 
 test('PostgreSQL migration, import, CRUD, filters, persistence and unavailable connection', { skip: !process.env.FILAMIND_TEST_DATABASE_URL }, async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'filamind-postgres-test-'))
@@ -62,6 +63,20 @@ test('PostgreSQL migration, import, CRUD, filters, persistence and unavailable c
     assert.equal(amazon.status, 201)
     const priced = await call('/api/admin/offers', 'POST', { ...initial.offers[0], productId: secondId, affiliateUrl: 'https://s.shopee.com.br/priced-test', priceCents: 12345, priceDisplayAuthorized: true, priceSource: 'Fonte de teste autorizada', priceUpdatedAt: now })
     assert.equal(priced.status, 201)
+    const outOfStock = await call(`/api/admin/offers/${ml.body.id}`, 'PUT', { ...ml.body, availability: 'unavailable', availabilityConfirmedAt: now })
+    assert.equal(outOfStock.status, 200)
+    assert.equal((await call('/api/offers?marketplace=mercado_livre')).body.total, 0)
+    assert.equal((await call('/api/admin/offers?marketplace=mercado_livre')).body.total, 1)
+    const backInStock = await call(`/api/admin/offers/${ml.body.id}`, 'PUT', { ...outOfStock.body, availability: 'available', availabilityConfirmedAt: now })
+    assert.equal(backInStock.status, 200)
+    assert.equal((await call('/api/offers?marketplace=mercado_livre')).body.total, 1)
+    const snapshot = { products: (await repo.list('products', new URLSearchParams())).items, offers: (await repo.list('offers', new URLSearchParams())).items }
+    for (const query of ['', 'q=PLA', 'marketplace=shopee', 'category=Filamentos', 'minPrice=12000&maxPrice=13000', 'sort=price_asc', 'sort=price_desc', 'sort=name', 'page=2']) {
+      const params = new URLSearchParams(query)
+      const json = listPublicOffers(snapshot, params)
+      const postgres = await repo.listPublic(params)
+      assert.deepEqual({ total: postgres.total, page: postgres.page, pages: postgres.pages, ids: postgres.items.map((item) => item.id) }, { total: json.total, page: json.page, pages: json.pages, ids: json.items.map((item) => item.id) }, query)
+    }
     assert.equal((await call('/api/offers?marketplace=amazon')).body.total, 1)
     assert.equal((await call('/api/offers?q=PLA')).body.total, 4)
     const sorted = await call('/api/offers?sort=price_asc')

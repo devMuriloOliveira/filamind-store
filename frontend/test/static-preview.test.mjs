@@ -41,7 +41,8 @@ test('static preview keeps public routes and assets while API and admin stay una
     await page.waitForURL(base + '/ofertas/')
 
     await page.goto(base + '/admin/ofertas/')
-    await page.waitForURL(base + '/')
+    await page.getByRole('heading', { name: 'Acesso administrativo indisponível' }).waitFor()
+    assert.equal(await page.locator('.admin-offers-forms').count(), 0)
     assert.deepEqual(pageErrors, [])
   } finally {
     if (browser) await browser.close()

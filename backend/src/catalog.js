@@ -118,8 +118,8 @@ export function listPublicOffers(data, params, now = Date.now()) {
   if (category && !categories.includes(category)) throw new CatalogError('Categoria inválida.')
   if (!['recent', 'name', 'price_asc', 'price_desc'].includes(sort)) throw new CatalogError('Ordenação inválida.')
   if (!Number.isSafeInteger(page) || page < 1) throw new CatalogError('Página inválida.')
-  const productById = new Map(data.products.filter((p) => p.active).map((p) => [p.id, p]))
-  let items = data.offers.filter((offer) => offer.active && safePublicOffer(offer) && productById.has(offer.productId)).map((offer) => {
+  const productById = new Map(data.products.filter((p) => p.active && !p.deletedAt).map((p) => [p.id, p]))
+  let items = data.offers.filter((offer) => offer.active && !offer.deletedAt && safePublicOffer(offer) && productById.has(offer.productId)).map((offer) => {
     const product = productById.get(offer.productId)
     return {
       id: offer.id, productId: product.id, name: product.name, description: product.description,
@@ -130,7 +130,7 @@ export function listPublicOffers(data, params, now = Date.now()) {
       availability: offer.availabilityConfirmedAt && now - Date.parse(offer.availabilityConfirmedAt) <= priceMaxAgeMs ? offer.availability : 'unknown',
       createdAt: offer.createdAt, keywords: product.keywords,
     }
-  })
+  }).filter((item) => item.availability !== 'unavailable')
   const availableCategories = [...new Set(items.map((item) => item.category))]
   const hasPrices = items.some((item) => item.priceCents !== null)
   const hasAmazon = items.some((item) => item.marketplace === 'amazon')

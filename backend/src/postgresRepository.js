@@ -6,6 +6,7 @@ const productColumns = `p.id, p.name, p.description, p.category, p.keywords, p.i
 const offerColumns = `o.id, o.product_id AS "productId", o.marketplace, o.affiliate_url AS "affiliateUrl", o.affiliate_confirmed AS "affiliateConfirmed", o.active, o.price_cents AS "priceCents", o.price_display_authorized AS "priceDisplayAuthorized", o.price_source AS "priceSource", o.price_updated_at AS "priceUpdatedAt", o.availability, o.availability_confirmed_at AS "availabilityConfirmedAt", o.created_at AS "createdAt", o.updated_at AS "updatedAt", o.deleted_at AS "deletedAt"`
 const publicBase = `FROM filamind_store.offers o JOIN filamind_store.products p ON p.id = o.product_id
   WHERE o.deleted_at IS NULL AND p.deleted_at IS NULL AND o.active AND p.active AND o.affiliate_confirmed
+  AND NOT (o.availability = 'unavailable' AND o.availability_confirmed_at >= $1::timestamptz - interval '24 hours')
   AND ((o.marketplace = 'shopee' AND o.affiliate_url ~* '^https://([a-z0-9-]+\\.)*shopee\\.com\\.br(/|$)')
     OR (o.marketplace = 'mercado_livre' AND o.affiliate_url ~* '^https://([a-z0-9-]+\\.)*mercadolivre\\.com\\.br(/|$)')
     OR (o.marketplace = 'amazon' AND o.affiliate_url ~* '^https://([a-z0-9-]+\\.)*amazon\\.com\\.br(/|$)'))`

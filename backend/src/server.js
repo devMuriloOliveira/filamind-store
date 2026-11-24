@@ -5,7 +5,10 @@ import { fileURLToPath } from 'node:url'
 import { CatalogError } from './catalog.js'
 import { createJsonRepository } from './jsonRepository.js'
 import { createLocalImageStorage } from './imageStorage.js'
+import { createSupabaseImageStorage } from './supabaseImageStorage.js'
 import { createLocalAdminAccess } from './localAdmin.js'
+import { createAdminAuth } from './adminAuth.js'
+import { createPostgresAdminAuthStore } from './postgresAdminAuthStore.js'
 import { createPostgresPool, createPostgresRepository } from './postgresRepository.js'
 import { loadRuntimeConfig } from './runtimeConfig.js'
 
@@ -42,8 +45,8 @@ const imageTypes = {
   'image/webp': { ext: '.webp', valid: (b) => b.toString('ascii', 0, 4) === 'RIFF' && b.toString('ascii', 8, 12) === 'WEBP' },
 }
 
-export function createOffersServer({ catalogPath = defaultCatalogPath, repository = null, uploadsPath = defaultUploadsPath, imageStorage = null, authorizeAdmin = null, localAdminAccess = null, frontendPath = distRoot } = {}) {
-  if (authorizeAdmin && localAdminAccess) throw new Error('Configure apenas uma forma de autorização administrativa.')
+export function createOffersServer({ catalogPath = defaultCatalogPath, repository = null, uploadsPath = defaultUploadsPath, imageStorage = null, authorizeAdmin = null, localAdminAccess = null, adminAuth = null, frontendPath = distRoot } = {}) {
+  if ([authorizeAdmin, localAdminAccess, adminAuth].filter(Boolean).length > 1) throw new Error('Configure apenas uma forma de autorização administrativa.')
   const store = repository || createJsonRepository(catalogPath)
   const images = imageStorage || createLocalImageStorage(uploadsPath)
   return http.createServer(async (req, res) => {
@@ -87,13 +90,33 @@ export function createOffersServer({ catalogPath = defaultCatalogPath, repositor
           res.setHeader('Set-Cookie', localAdminAccess.logout())
           return sendJson(res, 200, { authorized: false })
         }
-        if (!authorizeAdmin && !localAdminAccess) return sendJson(res, 503, { error: 'A integração com a autenticação administrativa ainda não foi configurada.' })
-        const authorized = localAdminAccess ? localAdminAccess.authorize(req) : await authorizeAdmin(req)
+        if (adminAuth && req.method === 'POST' && pathname === '/api/admin/login') {
+          if (!adminAuth.sameOrigin(req)) return sendJson(res, 403, { error: 'Origem não autorizada.' })
+          const result = await adminAuth.login(req, await readJson(req, 4096))
+          if (result.status === 429) return sendJson(res, 429, { error: 'Muitas tentativas. Aguarde 15 minutos e tente novamente.' })
+          if (result.status !== 200) return sendJson(res, 401, { error: 'Credenciais inválidas.' })
+          res.setHeader('Set-Cookie', result.cookie)
+          return sendJson(res, 200, { authorized: true, csrfToken: result.csrfToken })
+        }
+        if (adminAuth && req.method === 'POST' && pathname === '/api/admin/logout') {
+          const session = await adminAuth.authorize(req)
+          if (!session) return sendJson(res, 401, { error: 'Sessão administrativa expirada.' })
+          if (!adminAuth.validCsrf(req, session)) return sendJson(res, 403, { error: 'Requisição não autorizada.' })
+          res.setHeader('Set-Cookie', await adminAuth.logout(session))
+          return sendJson(res, 200, { authorized: false })
+        }
+        if (!authorizeAdmin && !localAdminAccess && !adminAuth) return sendJson(res, 503, { error: 'A integração com a autenticação administrativa ainda não foi configurada.' })
+        const session = adminAuth ? await adminAuth.authorize(req) : null
+        const authorized = localAdminAccess ? localAdminAccess.authorize(req) : adminAuth ? Boolean(session) : await authorizeAdmin(req)
         if (req.method === 'GET' && pathname === '/api/admin/status' && localAdminAccess) {
           return sendJson(res, authorized ? 200 : 401, { authorized, localLogin: !authorized, localAdmin: true })
         }
-        if (!authorized) return sendJson(res, localAdminAccess ? 401 : 403, { error: 'Acesso administrativo não autorizado.' })
-        if (req.method === 'GET' && pathname === '/api/admin/status') return sendJson(res, 200, { authorized: true })
+        if (!authorized) return sendJson(res, localAdminAccess || adminAuth ? 401 : 403, { error: 'Acesso administrativo não autorizado.' })
+        if (adminAuth && !['GET', 'HEAD'].includes(req.method)) {
+          if (!adminAuth.validCsrf(req, session)) return sendJson(res, 403, { error: 'Requisição não autorizada.' })
+          await adminAuth.recordWriteAttempt(session, req.method, pathname)
+        }
+        if (req.method === 'GET' && pathname === '/api/admin/status') return sendJson(res, 200, adminAuth ? { authorized: true, csrfToken: session.csrfToken } : { authorized: true })
         if (req.method === 'GET' && pathname === '/api/admin/catalog') return sendJson(res, 200, await store.read())
         if (req.method === 'GET' && pathname === '/api/admin/summary') return sendJson(res, 200, await store.summary())
         if (req.method === 'GET' && (pathname === '/api/admin/products' || pathname === '/api/admin/offers')) {
@@ -153,7 +176,7 @@ export function createOffersServer({ catalogPath = defaultCatalogPath, repositor
       if (/^\/admin\/ofertas(?:\/|$)/.test(pathname)) {
         if (localAdminAccess) {
           if (!localAdminAccess.isLocalRequest(req)) return sendJson(res, 404, { error: 'Página não encontrada.' })
-        } else if (!authorizeAdmin || !(await authorizeAdmin(req))) return sendJson(res, 404, { error: 'Página não encontrada.' })
+        } else if (!adminAuth && (!authorizeAdmin || !(await authorizeAdmin(req)))) return sendJson(res, 404, { error: 'Página não encontrada.' })
         res.setHeader('Cache-Control', 'no-store')
       }
       if (req.method !== 'GET' && req.method !== 'HEAD') return sendJson(res, 405, { error: 'Método não permitido.' })
@@ -183,14 +206,33 @@ export function createOffersServer({ catalogPath = defaultCatalogPath, repositor
   })
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+export async function createConfiguredOffersServer(env = process.env, { catalogPath = defaultCatalogPath, uploadsPath = defaultUploadsPath, frontendPath = distRoot } = {}) {
+  const config = loadRuntimeConfig(env)
   let pool
   try {
-    const config = loadRuntimeConfig()
-    const localAdminAccess = process.env.FILAMIND_LOCAL_ADMIN === '1' ? createLocalAdminAccess(config.host) : null
-    const repository = config.storage === 'postgres' ? createPostgresRepository(pool = createPostgresPool(config.databaseUrl)) : createJsonRepository(defaultCatalogPath)
+    const localAdminAccess = env.FILAMIND_LOCAL_ADMIN === '1' ? createLocalAdminAccess(config.host) : null
+    const repository = config.storage === 'postgres' ? createPostgresRepository(pool = createPostgresPool(config.databaseUrl)) : createJsonRepository(catalogPath)
     if (repository.assertReady) await repository.assertReady()
-    const server = createOffersServer({ repository, localAdminAccess, uploadsPath: config.uploadsPath || defaultUploadsPath })
+    let adminAuth = null
+    if (config.adminAuth === 'postgres') {
+      const authStore = createPostgresAdminAuthStore(pool)
+      await authStore.assertReady()
+      adminAuth = createAdminAuth({ store: authStore, origin: config.adminOrigin, production: env.NODE_ENV === 'production' })
+    }
+    const imageStorage = config.imageStorage === 'supabase'
+      ? createSupabaseImageStorage({ projectUrl: config.supabaseUrl, bucket: config.supabaseBucket, secretKey: config.supabaseSecretKey })
+      : createLocalImageStorage(config.uploadsPath || uploadsPath)
+    const server = createOffersServer({ repository, localAdminAccess, adminAuth, imageStorage, frontendPath })
+    return { config, server, pool, localAdminAccess }
+  } catch (error) {
+    await pool?.end()
+    throw error
+  }
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  try {
+    const { config, server, localAdminAccess } = await createConfiguredOffersServer()
     server.listen(config.port, config.host, () => {
       console.log(`Filamind comercial: http://${config.host}:${config.port}/`)
       if (localAdminAccess) {
@@ -200,7 +242,6 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     })
   } catch (error) {
     console.error('Falha ao iniciar Filamind Store. Código:', error?.code || error?.message?.replace(/DATABASE_URL=[^\s]+/g, 'DATABASE_URL=[REDACTED]') || 'unknown')
-    await pool?.end()
     process.exitCode = 1
   }
 }

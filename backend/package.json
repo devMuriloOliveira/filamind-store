@@ -6,7 +6,10 @@
     "start": "node src/server.js",
     "test": "node --test",
     "db:init": "node scripts/init-schema.js",
-    "db:import": "node scripts/import-catalog.js"
+    "db:import": "node scripts/import-catalog.js",
+    "db:admin-auth": "node scripts/init-admin-auth.js",
+    "admin:create": "node scripts/create-first-admin.js",
+    "images:sync": "node scripts/sync-images.js"
   },
   "engines": {
     "node": ">=20"

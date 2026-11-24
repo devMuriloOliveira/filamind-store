@@ -75,6 +75,7 @@ watch([() => route.query, retryToken], async ([query], _old, onCleanup) => {
       </div>
       <p class="offers-disclosure"><strong>Publicidade:</strong> esta página pode conter links de afiliados. O Filamind pode receber uma comissão quando você compra por esses links, sem custo adicional decorrente dessa comissão. A compra é concluída na loja de origem.</p>
       <p v-if="result.hasAmazon" class="offers-amazon-disclosure">Como associado da Amazon, eu recebo por compras qualificadas.</p>
+      <p class="offers-price-notice">Os preços e a disponibilidade dos produtos podem variar. Consulte as informações atualizadas diretamente na loja antes de finalizar sua compra.</p>
 
       <div class="offers-layout">
         <aside class="offers-filters" aria-label="Filtros de ofertas">

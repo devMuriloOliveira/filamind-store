@@ -1,3 +1,14 @@
 /promocoes   /ofertas/   301
 /promocoes/  /ofertas/   301
-/*           /index.html 200
+/ofertas     /ofertas/   301
+/admin/ofertas /admin/ofertas/ 301
+/privacidade /privacidade/ 301
+/termos      /termos/ 301
+/cookies     /cookies/ 301
+/reembolso   /reembolso/ 301
+/ofertas/    /index.html 200
+/admin/ofertas/ /index.html 200
+/privacidade/ /index.html 200
+/termos/     /index.html 200
+/cookies/    /index.html 200
+/reembolso/  /index.html 200
