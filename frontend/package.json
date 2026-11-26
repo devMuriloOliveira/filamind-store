@@ -7,7 +7,7 @@
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1",
-    "test": "node --test test/admin-image.test.mjs test/admin-workflow.test.mjs test/admin-remote-login.test.mjs test/real-catalog-smoke.test.mjs test/static-preview.test.mjs",
+    "test": "node --test test/admin-image.test.mjs test/admin-workflow.test.mjs test/admin-remote-login.test.mjs test/offers-filters.test.mjs test/quick-offer.test.mjs test/real-catalog-smoke.test.mjs test/static-preview.test.mjs",
     "test:image": "node --test test/admin-image.test.mjs"
   },
   "dependencies": {

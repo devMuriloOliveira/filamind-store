@@ -28,6 +28,7 @@ test('admin creates three marketplace offers, filters records and keeps responsi
     await page.getByLabel('Código temporário').fill(access.code)
     await page.getByRole('button', { name: 'Acessar painel' }).click()
     await page.getByText('Produtos Shopee').waitFor()
+    await page.locator('.admin-offers-advanced summary').click()
     const form = page.locator('.admin-offers-forms form').last()
     const links = [
       ['shopee', 'https://s.shopee.com.br/teste-afiliado'],
@@ -35,6 +36,7 @@ test('admin creates three marketplace offers, filters records and keeps responsi
       ['amazon', 'https://www.amazon.com.br/teste?tag=teste'],
     ]
     for (const [marketplace, affiliateUrl] of links) {
+      await page.getByRole('button', { name: 'Oferta para produto existente' }).click()
       await form.locator('select').first().selectOption(productId)
       await form.getByLabel('Marketplace').selectOption(marketplace)
       await form.getByLabel('Link de afiliado HTTPS').fill(affiliateUrl)
@@ -75,12 +77,11 @@ test('admin creates three marketplace offers, filters records and keeps responsi
       const response = await fetch(`/api/admin/offers/${entry.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(entry) })
       return response.status
     }, { ...unchanged, priceUpdatedAt: freshDate, availabilityConfirmedAt: freshDate }), 200)
-    const noticeText = 'Os preços e a disponibilidade dos produtos podem variar. Consulte as informações atualizadas diretamente na loja antes de finalizar sua compra.'
     const pricedPage = await browser.newPage({ viewport: { width: 1440, height: 900 } })
     await pricedPage.goto(base + '/ofertas/')
     await pricedPage.locator('.offer-card').first().waitFor()
     await pricedPage.getByText('R$ 123,45').waitFor()
-    assert.equal(await pricedPage.locator('.offers-price-notice').innerText(), noticeText)
+    assert.match(await pricedPage.locator('.offer-card-price-note').first().innerText(), /O preço pode mudar na loja/)
     await pricedPage.close()
     await page.locator('.admin-offers-list ul').last().locator('li').filter({ hasText: 'Shopee' }).getByRole('button', { name: 'Editar' }).click()
     await form.getByLabel('Preço em R$ (opcional)').fill('')
@@ -105,16 +106,16 @@ test('admin creates three marketplace offers, filters records and keeps responsi
     await page.locator('.offer-card').first().waitFor()
     assert.equal(await page.locator('.offer-card').count(), 3)
     assert.equal(await page.locator('.offers-price-filter').count(), 0)
-    assert.equal(await page.locator('.offers-price-notice').innerText(), noticeText)
+    assert.equal(await page.locator('.offers-price-notice').count(), 0)
     for (const width of [1440, 768, 390, 320]) {
       await page.setViewportSize({ width, height: 900 })
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, `offers overflow at ${width}px`)
-      assert.equal(await page.locator('.offers-price-notice').isVisible(), true)
-      assert.equal(await page.locator('.offers-price-notice').evaluate((element) => element.getBoundingClientRect().right <= window.innerWidth), true)
+      assert.equal(await page.locator('#offers-category').isVisible(), true)
+      assert.equal(await page.locator('#offers-sort').isVisible(), true)
     }
     await page.goto(base + '/ofertas/?q=semresultado')
     await page.getByRole('heading', { name: 'Nenhuma oferta encontrada' }).waitFor()
-    assert.equal(await page.locator('.offers-price-notice').innerText(), noticeText)
+    assert.equal(await page.locator('.offers-state').isVisible(), true)
     assert.deepEqual(pageErrors, [])
 
     await browser.close(); browser = null

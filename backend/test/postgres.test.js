@@ -6,6 +6,9 @@ import path from 'node:path'
 import { createOffersServer } from '../src/server.js'
 import { createPostgresPool, createPostgresRepository } from '../src/postgresRepository.js'
 import { initializeSchema } from '../scripts/init-schema.js'
+import { initializeAdminAuthSchema } from '../scripts/init-admin-auth.js'
+import { initializeCategories } from '../scripts/init-categories.js'
+import { initializeOriginalPrice } from '../scripts/init-original-price.js'
 import { importCatalog, prepareCatalogImport } from '../scripts/import-catalog.js'
 import { listPublicOffers } from '../src/catalog.js'
 
@@ -27,6 +30,12 @@ test('PostgreSQL migration, import, CRUD, filters, persistence and unavailable c
   try {
     assert.deepEqual(await initializeSchema(pool), { version: 1, created: true })
     await assert.rejects(initializeSchema(pool), /já existe/)
+    assert.deepEqual(await initializeAdminAuthSchema(pool), { version: 2, created: true })
+    assert.deepEqual(await initializeCategories(pool), { version: 3, created: true })
+    await assert.rejects(initializeCategories(pool), /Migrations 001 e 002/)
+    assert.deepEqual(await initializeOriginalPrice(pool), { version: 4, created: true })
+    await assert.rejects(initializeOriginalPrice(pool), /Migrations 001 a 003/)
+    assert.deepEqual((await pool.query('SELECT version FROM filamind_store.schema_migrations ORDER BY version')).rows.map(({ version }) => version), [1, 2, 3, 4])
     const plan = await prepareCatalogImport(catalogPath, imagesPath)
     assert.equal(plan.images.length, 1)
     assert.equal((await importCatalog(pool, plan)).status, 'imported')
@@ -35,6 +44,15 @@ test('PostgreSQL migration, import, CRUD, filters, persistence and unavailable c
     await assert.rejects(importCatalog(pool, changed), /outra importação/)
     const repo = createPostgresRepository(pool)
     await repo.assertReady()
+    const complete = { name: 'Oferta conjunta', description: 'Teste', category: 'filamentos', marketplace: 'mercado_livre', affiliateUrl: 'https://www.mercadolivre.com.br/conjunta', priceFrom: '249,90', priceBy: '199,90', affiliateConfirmed: true, priceAuthorized: true, imageAuthorized: true }
+    const together = await repo.createCompleteOffer(complete)
+    assert.equal(together.offer.priceCents, 19990)
+    assert.equal(together.offer.originalPriceCents, 24990)
+    assert.equal((await repo.listPublic(new URLSearchParams('q=conjunta'))).items[0].originalPriceCents, 24990)
+    await assert.rejects(repo.createCompleteOffer({ ...complete, name: 'Produto que deve ser revertido' }), { code: '23505' })
+    assert.equal((await pool.query(`SELECT count(*)::int AS total FROM filamind_store.products WHERE name = 'Produto que deve ser revertido'`)).rows[0].total, 0)
+    await repo.deleteOffer(together.offer.id)
+    await repo.deleteProduct(together.product.id)
     assert.equal((await repo.get('products', productId)).imageUrl, `/offer-images/${imageName}`)
     assert.equal((await repo.get('offers', offerId)).affiliateUrl, initial.offers[0].affiliateUrl)
     assert.equal((await repo.listPublic(new URLSearchParams())).total, 1)
@@ -71,7 +89,7 @@ test('PostgreSQL migration, import, CRUD, filters, persistence and unavailable c
     assert.equal(backInStock.status, 200)
     assert.equal((await call('/api/offers?marketplace=mercado_livre')).body.total, 1)
     const snapshot = { products: (await repo.list('products', new URLSearchParams())).items, offers: (await repo.list('offers', new URLSearchParams())).items }
-    for (const query of ['', 'q=PLA', 'marketplace=shopee', 'category=Filamentos', 'minPrice=12000&maxPrice=13000', 'sort=price_asc', 'sort=price_desc', 'sort=name', 'page=2']) {
+    for (const query of ['', 'q=PLA', 'marketplace=shopee', 'category=Filamentos', 'categoria=filamentos', 'minPrice=12000&maxPrice=13000', 'sort=price_asc', 'sort=price_desc', 'sort=name', 'page=2']) {
       const params = new URLSearchParams(query)
       const json = listPublicOffers(snapshot, params)
       const postgres = await repo.listPublic(params)
@@ -94,6 +112,13 @@ test('PostgreSQL migration, import, CRUD, filters, persistence and unavailable c
     assert.equal((await call('/api/admin/products?page=1')).body.items.length, 20)
     assert.equal((await call('/api/admin/products?page=2')).body.items.length, 2)
     assert.equal((await call('/api/admin/products?q=paginado%2020')).body.total, 1)
+    const resin = await repo.createProduct({ ...initial.products[0], name: 'Resina isolada', category: 'resinas', imageUrl: '', imageRightsSource: '' })
+    const resinOffer = await repo.createOffer({ ...initial.offers[0], productId: resin.id, affiliateUrl: 'https://s.shopee.com.br/resina-isolada' })
+    const resinResult = await repo.listPublic(new URLSearchParams('categoria=resinas'))
+    assert.equal(resinResult.items[0].id, resinOffer.id)
+    assert.equal(resinResult.items[0].categoryLabel, 'Resinas')
+    await repo.deleteOffer(resinOffer.id)
+    await repo.deleteProduct(resin.id)
     await new Promise((resolve) => server.close(resolve)); server = null
     server = createOffersServer({ repository: createPostgresRepository(pool), frontendPath: directory })
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))

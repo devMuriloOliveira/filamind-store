@@ -1,7 +1,17 @@
 <script setup>
 import { onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import QuickOfferForm from '../components/QuickOfferForm.vue'
 
-const categories = ['Filamentos', 'Impressoras 3D', 'Bicos e hotends', 'Peças de reposição', 'Ferramentas', 'Acessórios', 'Manutenção', 'Outros']
+const categories = [
+  { value: 'impressoras-3d', label: 'Impressoras 3D' },
+  { value: 'filamentos', label: 'Filamentos' },
+  { value: 'pecas-reposicao', label: 'Peças e reposição' },
+  { value: 'acessorios-ferramentas', label: 'Acessórios e ferramentas' },
+  { value: 'resinas', label: 'Resinas' },
+  { value: 'kits-combos', label: 'Kits e combos' },
+]
+const legacyCategories = ['Filamentos', 'Impressoras 3D', 'Bicos e hotends', 'Peças de reposição', 'Ferramentas', 'Acessórios', 'Manutenção', 'Outros']
+const categoryLabel = (value) => categories.find((item) => item.value === value)?.label || value
 const marketplaces = [{ id: 'mercado_livre', name: 'Mercado Livre' }, { id: 'shopee', name: 'Shopee' }, { id: 'amazon', name: 'Amazon' }]
 const status = ref('loading')
 const message = ref('')
@@ -27,6 +37,8 @@ const productChoices = ref([])
 const search = ref('')
 const productId = ref('')
 const offerId = ref('')
+const advancedMode = ref('')
+const advancedPanel = ref(null)
 const imageInput = ref(null)
 const selectedImage = ref(null)
 const selectedImageValid = ref(false)
@@ -37,8 +49,8 @@ const imagePreviewFailed = ref(false)
 const uploadingImage = ref(false)
 let imageReader = null
 let imageSelection = 0
-const product = reactive({ name: '', description: '', category: 'Filamentos', keywords: '', imageUrl: '', imageRightsSource: '', featured: false, active: false })
-const offer = reactive({ productId: '', marketplace: 'mercado_livre', affiliateUrl: '', affiliateConfirmed: false, active: false, price: '', priceDisplayAuthorized: false, priceSource: '', priceUpdatedAt: '', availability: 'unknown', availabilityConfirmedAt: '' })
+const product = reactive({ name: '', description: '', category: 'filamentos', keywords: '', imageUrl: '', imageRightsSource: '', featured: false, active: false })
+const offer = reactive({ productId: '', marketplace: 'mercado_livre', affiliateUrl: '', affiliateConfirmed: false, active: false, price: '', originalPrice: '', priceDisplayAuthorized: false, priceSource: '', priceUpdatedAt: '', availability: 'unknown', availabilityConfirmedAt: '' })
 const originalOfferDates = { priceUpdatedAt: null, availabilityConfirmedAt: null }
 let loadRevision = 0
 function clearSession() {
@@ -53,6 +65,16 @@ function clearSession() {
   status.value = 'login'
   resetProduct()
   resetOffer()
+  advancedMode.value = ''
+}
+async function afterQuickCreate() {
+  try { await Promise.all([load(), loadProductChoices()]) }
+  catch (error) { message.value = error.message }
+}
+function showAdvanced(mode) {
+  advancedMode.value = mode
+  if (advancedPanel.value) advancedPanel.value.open = true
+  requestAnimationFrame(() => advancedPanel.value?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
 }
 const pad = (value) => String(value).padStart(2, '0')
 function toLocalDateTime(value) {
@@ -183,22 +205,23 @@ const clearSelectedImage = () => {
   uploadedImageUrl.value = ''
 }
 onUnmounted(clearSelectedImage)
-const resetProduct = () => { clearSelectedImage(); imageMessage.value = ''; imagePreviewFailed.value = false; productId.value = ''; Object.assign(product, { name: '', description: '', category: 'Filamentos', keywords: '', imageUrl: '', imageRightsSource: '', featured: false, active: false }) }
-const resetOffer = () => { offerId.value = ''; originalOfferDates.priceUpdatedAt = null; originalOfferDates.availabilityConfirmedAt = null; Object.assign(offer, { productId: '', marketplace: 'mercado_livre', affiliateUrl: '', affiliateConfirmed: false, active: false, price: '', priceDisplayAuthorized: false, priceSource: '', priceUpdatedAt: '', availability: 'unknown', availabilityConfirmedAt: '' }) }
+const resetProduct = () => { clearSelectedImage(); imageMessage.value = ''; imagePreviewFailed.value = false; productId.value = ''; Object.assign(product, { name: '', description: '', category: 'filamentos', keywords: '', imageUrl: '', imageRightsSource: '', featured: false, active: false }) }
+const resetOffer = () => { offerId.value = ''; originalOfferDates.priceUpdatedAt = null; originalOfferDates.availabilityConfirmedAt = null; Object.assign(offer, { productId: '', marketplace: 'mercado_livre', affiliateUrl: '', affiliateConfirmed: false, active: false, price: '', originalPrice: '', priceDisplayAuthorized: false, priceSource: '', priceUpdatedAt: '', availability: 'unknown', availabilityConfirmedAt: '' }) }
 const onMarketplaceChange = () => {
   originalOfferDates.priceUpdatedAt = null
   originalOfferDates.availabilityConfirmedAt = null
   offer.affiliateUrl = ''
   offer.affiliateConfirmed = false
   offer.price = ''
+  offer.originalPrice = ''
   offer.priceDisplayAuthorized = false
   offer.priceSource = ''
   offer.priceUpdatedAt = ''
   offer.availability = 'unknown'
   offer.availabilityConfirmedAt = ''
 }
-const editProduct = (item) => { clearSelectedImage(); imagePreviewFailed.value = false; imageMessage.value = item.imageUrl ? 'Imagem já cadastrada. Selecione outra para substituir.' : 'Este produto ainda não tem imagem cadastrada.'; productId.value = item.id; Object.assign(product, item, { keywords: item.keywords.join(', ') }); window.scrollTo({ top: 0, behavior: 'smooth' }) }
-const editOffer = (item) => { offerId.value = item.id; originalOfferDates.priceUpdatedAt = item.priceUpdatedAt; originalOfferDates.availabilityConfirmedAt = item.availabilityConfirmedAt; if (!productChoices.value.some((p) => p.id === item.productId)) productChoices.value = [{ id: item.productId, name: item.productName }, ...productChoices.value]; Object.assign(offer, item, { price: item.priceCents === null ? '' : String(item.priceCents / 100), priceUpdatedAt: toLocalDateTime(item.priceUpdatedAt), availabilityConfirmedAt: toLocalDateTime(item.availabilityConfirmedAt) }); window.scrollTo({ top: 0, behavior: 'smooth' }) }
+const editProduct = (item) => { clearSelectedImage(); imagePreviewFailed.value = false; imageMessage.value = item.imageUrl ? 'Imagem já cadastrada. Selecione outra para substituir.' : 'Este produto ainda não tem imagem cadastrada.'; productId.value = item.id; Object.assign(product, item, { keywords: item.keywords.join(', ') }); showAdvanced('product') }
+const editOffer = (item) => { offerId.value = item.id; originalOfferDates.priceUpdatedAt = item.priceUpdatedAt; originalOfferDates.availabilityConfirmedAt = item.availabilityConfirmedAt; if (!productChoices.value.some((p) => p.id === item.productId)) productChoices.value = [{ id: item.productId, name: item.productName }, ...productChoices.value]; Object.assign(offer, item, { price: item.priceCents == null ? '' : String(item.priceCents / 100), originalPrice: item.originalPriceCents == null ? '' : String(item.originalPriceCents / 100), priceUpdatedAt: toLocalDateTime(item.priceUpdatedAt), availabilityConfirmedAt: toLocalDateTime(item.availabilityConfirmedAt) }); showAdvanced('offer') }
 
 async function saveProduct() {
   message.value = ''
@@ -206,7 +229,7 @@ async function saveProduct() {
   try {
     const body = { ...product, keywords: product.keywords.split(',').map((item) => item.trim()).filter(Boolean) }
     const saved = await request(productId.value ? `/api/admin/products/${productId.value}` : '/api/admin/products', { method: productId.value ? 'PUT' : 'POST', body: JSON.stringify(body) })
-    resetProduct(); await Promise.all([load(), loadProductChoices()]); message.value = saved.imageUrl ? 'Produto salvo com imagem.' : 'Produto salvo sem imagem. Você pode editar e enviar uma imagem depois.'
+    resetProduct(); advancedMode.value = ''; await Promise.all([load(), loadProductChoices()]); message.value = saved.imageUrl ? 'Produto salvo com imagem.' : 'Produto salvo sem imagem. Você pode editar e enviar uma imagem depois.'
   } catch (error) { message.value = error.message }
 }
 async function saveOffer() {
@@ -214,10 +237,11 @@ async function saveOffer() {
   try {
     if (offer.price && !offer.priceUpdatedAt) throw new Error('Informe a data de atualização do preço.')
     if (offer.availability !== 'unknown' && !offer.availabilityConfirmedAt) throw new Error('Informe a data de confirmação da disponibilidade.')
-    const body = { ...offer, priceCents: offer.marketplace !== 'amazon' && offer.price !== '' ? Math.round(Number(offer.price) * 100) : null, priceUpdatedAt: offer.price ? toUtcDateTime(offer.priceUpdatedAt, originalOfferDates.priceUpdatedAt, 'Data do preço') : null, availabilityConfirmedAt: offer.availability !== 'unknown' ? toUtcDateTime(offer.availabilityConfirmedAt, originalOfferDates.availabilityConfirmedAt, 'Data da disponibilidade') : null }
+    const body = { ...offer, priceCents: offer.marketplace !== 'amazon' && offer.price !== '' ? Math.round(Number(offer.price) * 100) : null, originalPriceCents: offer.marketplace !== 'amazon' && offer.originalPrice !== '' ? Math.round(Number(offer.originalPrice) * 100) : null, priceUpdatedAt: offer.price ? toUtcDateTime(offer.priceUpdatedAt, originalOfferDates.priceUpdatedAt, 'Data do preço') : null, availabilityConfirmedAt: offer.availability !== 'unknown' ? toUtcDateTime(offer.availabilityConfirmedAt, originalOfferDates.availabilityConfirmedAt, 'Data da disponibilidade') : null }
     delete body.price
+    delete body.originalPrice
     await request(offerId.value ? `/api/admin/offers/${offerId.value}` : '/api/admin/offers', { method: offerId.value ? 'PUT' : 'POST', body: JSON.stringify(body) })
-    resetOffer(); await load(); message.value = 'Oferta salva.'
+    resetOffer(); advancedMode.value = ''; await load(); message.value = 'Oferta salva.'
   } catch (error) { message.value = error.message }
 }
 async function remove(kind, id) {
@@ -310,7 +334,7 @@ async function uploadImage() {
       <button class="button button-primary" type="submit" :disabled="loginBusy">{{ loginBusy ? 'Entrando…' : localMode ? 'Acessar painel' : 'Entrar' }}</button>
     </form>
     <template v-else>
-      <p class="admin-offers-notice">Cadastre apenas produtos reais, imagens autorizadas e links gerados nos programas de afiliados. Ative produto e oferta para aparecerem na página pública.</p>
+      <p class="admin-offers-notice">Cadastre apenas produtos reais, imagens autorizadas e links gerados nos programas de afiliados.</p>
       <button class="button button-secondary admin-offers-logout" type="button" :disabled="logoutBusy" @click="logout">{{ logoutBusy ? 'Encerrando…' : localMode ? 'Encerrar acesso local' : 'Sair da conta' }}</button>
       <p class="admin-offers-message" role="status">{{ message }}</p>
       <section v-if="summary" class="admin-offers-summary" aria-label="Resumo do catálogo">
@@ -325,12 +349,16 @@ async function uploadImage() {
         <div><strong>{{ summary.offersWithoutPrice }}</strong><span>Ofertas sem preço</span></div>
         <div><strong>{{ summary.offersForReview }}</strong><span>Links a revisar</span></div>
       </section>
+      <QuickOfferForm :request="request" @created="afterQuickCreate" />
+      <details ref="advancedPanel" class="admin-offers-advanced"><summary>Edição e controles avançados</summary>
+        <p class="admin-offers-help">Edite registros abaixo ou use os controles para cadastrar um produto avulso e associar outra oferta a um produto existente.</p>
+        <div class="admin-offers-actions"><button type="button" class="button button-secondary" @click="resetProduct(); advancedMode = 'product'">Produto avulso</button><button type="button" class="button button-secondary" @click="resetOffer(); advancedMode = 'offer'">Oferta para produto existente</button></div>
       <div class="admin-offers-forms">
-        <form class="admin-offers-panel" @submit.prevent="saveProduct">
+        <form v-if="advancedMode === 'product'" class="admin-offers-panel" @submit.prevent="saveProduct">
           <h2>{{ productId ? 'Editar produto' : 'Novo produto' }}</h2>
           <label>Nome <input v-model="product.name" required minlength="3" maxlength="140"></label>
           <label>Descrição curta <textarea v-model="product.description" maxlength="500" rows="3"></textarea></label>
-          <label>Categoria <select v-model="product.category"><option v-for="category in categories" :key="category">{{ category }}</option></select></label>
+          <label>Categoria <select v-model="product.category"><option v-for="category in categories" :key="category.value" :value="category.value">{{ category.label }}</option><option v-if="productId && legacyCategories.includes(product.category)" :value="product.category">{{ product.category }} (categoria anterior)</option></select></label>
           <label>Termos de busca, separados por vírgula <input v-model="product.keywords" maxlength="400"></label>
           <label>Origem e autorização da imagem <input v-model="product.imageRightsSource" maxlength="160" placeholder="Ex.: imagem própria ou licença documentada"></label>
           <label>Imagem PNG, JPEG ou WebP (até 2 MB) <input ref="imageInput" type="file" accept="image/png,image/jpeg,image/webp" :disabled="uploadingImage" @change="selectImage"></label>
@@ -343,7 +371,7 @@ async function uploadImage() {
           <label class="admin-offers-check"><input v-model="product.active" type="checkbox"> Produto ativo</label>
           <div class="admin-offers-actions"><button class="button button-primary" type="submit" :disabled="uploadingImage">Salvar produto</button><button class="button button-secondary" type="button" :disabled="uploadingImage" @click="resetProduct">Limpar</button></div>
         </form>
-        <form class="admin-offers-panel" @submit.prevent="saveOffer">
+        <form v-if="advancedMode === 'offer'" class="admin-offers-panel" @submit.prevent="saveOffer">
           <h2>{{ offerId ? 'Editar oferta' : 'Nova oferta' }}</h2>
           <label>Buscar produto para associar <input v-model="productSearch" type="search" placeholder="Digite o nome do produto"></label>
           <label>Produto <select v-model="offer.productId" required><option value="">Selecione</option><option v-for="item in productChoices" :key="item.id" :value="item.id">{{ item.name }}</option></select></label>
@@ -352,6 +380,7 @@ async function uploadImage() {
           <label>Link de afiliado HTTPS <input v-model="offer.affiliateUrl" type="url" required maxlength="2048" placeholder="Cole o link real da sua conta"></label>
           <label class="admin-offers-check"><input v-model="offer.affiliateConfirmed" type="checkbox"> Confirmo que o link é meu e foi gerado no programa de afiliados</label>
           <template v-if="offer.marketplace !== 'amazon'">
+            <label>Preço de em R$ (opcional) <input v-model="offer.originalPrice" type="number" min="0.01" step="0.01" inputmode="decimal"></label>
             <label>Preço em R$ (opcional) <input v-model="offer.price" type="number" min="0.01" step="0.01" inputmode="decimal"></label>
             <template v-if="offer.price"><label class="admin-offers-check"><input v-model="offer.priceDisplayAuthorized" type="checkbox"> Tenho autorização para exibir este preço</label><label>Origem do preço <input v-model="offer.priceSource" maxlength="160" required></label><label>Atualizado em <input v-model="offer.priceUpdatedAt" type="datetime-local" required></label></template>
           </template>
@@ -362,14 +391,15 @@ async function uploadImage() {
           <div class="admin-offers-actions"><button class="button button-primary" type="submit">Salvar oferta</button><button class="button button-secondary" type="button" @click="resetOffer">Limpar</button></div>
         </form>
       </div>
+      </details>
       <section class="admin-offers-list"><h2>Registros</h2>
         <div class="admin-offers-filters">
           <label>Buscar cadastrados <input v-model="search" type="search" placeholder="Produto, categoria ou marketplace"></label>
-          <label>Categoria <select v-model="categoryFilter"><option value="">Todas</option><option v-for="category in categories" :key="category">{{ category }}</option></select></label>
+          <label>Categoria <select v-model="categoryFilter"><option value="">Todas</option><option v-for="category in categories" :key="category.value" :value="category.value">{{ category.label }}</option><option v-for="category in legacyCategories" :key="category" :value="category">{{ category }} (anterior)</option></select></label>
           <label>Marketplace <select v-model="marketplaceFilter"><option value="">Todos</option><option v-for="item in marketplaces" :key="item.id" :value="item.id">{{ item.name }}</option></select></label>
           <label>Status <select v-model="statusFilter"><option value="">Todos</option><option value="active">Ativos</option><option value="inactive">Inativos</option></select></label>
         </div>
-        <h3>Produtos ({{ totals.products }})</h3><p v-if="!catalog.products.length">Nenhum produto encontrado.</p><ul><li v-for="item in catalog.products" :key="item.id"><span>{{ item.name }} · {{ item.category }} · {{ item.active ? 'Ativo' : 'Inativo' }}</span><div><button type="button" :disabled="uploadingImage" @click="editProduct(item)">Editar</button><button type="button" @click="remove('products', item.id)">Remover</button></div></li></ul>
+        <h3>Produtos ({{ totals.products }})</h3><p v-if="!catalog.products.length">Nenhum produto encontrado.</p><ul><li v-for="item in catalog.products" :key="item.id"><span>{{ item.name }} · {{ categoryLabel(item.category) }} · {{ item.active ? 'Ativo' : 'Inativo' }}</span><div><button type="button" :disabled="uploadingImage" @click="editProduct(item)">Editar</button><button type="button" @click="remove('products', item.id)">Remover</button></div></li></ul>
         <nav v-if="pages.products > 1" class="admin-offers-pagination" aria-label="Páginas de produtos"><button type="button" :disabled="productPage <= 1" @click="changePage('products', productPage - 1)">Anterior</button><span>Página {{ productPage }} de {{ pages.products }}</span><button type="button" :disabled="productPage >= pages.products" @click="changePage('products', productPage + 1)">Próxima</button></nav>
         <h3>Ofertas ({{ totals.offers }})</h3><p v-if="!catalog.offers.length">Nenhuma oferta encontrada.</p><ul><li v-for="item in catalog.offers" :key="item.id"><span>{{ item.productName }} · {{ marketplaces.find((m) => m.id === item.marketplace)?.name }} · {{ item.active ? 'Ativa' : 'Inativa' }}</span><div><button type="button" @click="editOffer(item)">Editar</button><button type="button" @click="remove('offers', item.id)">Remover</button></div></li></ul>
         <nav v-if="pages.offers > 1" class="admin-offers-pagination" aria-label="Páginas de ofertas"><button type="button" :disabled="offerPage <= 1" @click="changePage('offers', offerPage - 1)">Anterior</button><span>Página {{ offerPage }} de {{ pages.offers }}</span><button type="button" :disabled="offerPage >= pages.offers" @click="changePage('offers', offerPage + 1)">Próxima</button></nav>

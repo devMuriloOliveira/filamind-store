@@ -23,7 +23,7 @@ frontend/
   vercel.json               Fallback, redirect e headers para Vercel
 backend/
   src/                     API, catálogo, autenticação e imagens
-  migrations/              Schemas PostgreSQL 001 e 002
+  migrations/              Schemas PostgreSQL 001 a 004
   scripts/                 Importação, imagens e primeira conta administrativa
   catalog.example.json      Catálogo vazio para preparar uma cópia nova
   data/catalog.json         Catálogo local real, fora do Git

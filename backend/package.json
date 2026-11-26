@@ -8,6 +8,8 @@
     "db:init": "node scripts/init-schema.js",
     "db:import": "node scripts/import-catalog.js",
     "db:admin-auth": "node scripts/init-admin-auth.js",
+    "db:categories": "node scripts/init-categories.js",
+    "db:original-price": "node scripts/init-original-price.js",
     "admin:create": "node scripts/create-first-admin.js",
     "images:sync": "node scripts/sync-images.js"
   },

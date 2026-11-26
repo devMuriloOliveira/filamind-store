@@ -138,6 +138,13 @@ export function createOffersServer({ catalogPath = defaultCatalogPath, repositor
           return sendJson(res, 201, { imageUrl: await images.save(buffer, type.ext) })
         }
 
+        if (req.method === 'POST' && pathname === '/api/admin/complete-offers') {
+          const input = await readJson(req)
+          const imageUrl = input?.imageUrl || ''
+          if (imageUrl && !await images.exists(imageUrl)) throw new CatalogError('Imagem enviada não encontrada.')
+          return sendJson(res, 201, await store.createCompleteOffer(input, imageUrl))
+        }
+
         const productMatch = pathname.match(/^\/api\/admin\/products(?:\/([a-f0-9-]{36}))?$/)
         if (productMatch && ['POST', 'PUT', 'DELETE'].includes(req.method)) {
           if (req.method === 'POST' && !productMatch[1]) {

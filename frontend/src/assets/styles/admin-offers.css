@@ -9,6 +9,15 @@
 .admin-offers-summary strong { color: var(--blue-deep); font-size: 23px; }
 .admin-offers-summary span { color: var(--muted); font-size: 12px; line-height: 1.4; }
 .admin-offers-forms { display: grid; grid-template-columns: 1fr 1fr; align-items: start; gap: 22px; }
+.admin-offers-advanced { margin-top: 24px; padding: 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--pale); }
+.admin-offers-advanced summary { cursor: pointer; color: var(--blue-deep); font-weight: 700; }
+.admin-offers-advanced > p, .admin-offers-advanced > div { margin-top: 14px; }
+.admin-offers-advanced .admin-offers-forms { grid-template-columns: minmax(0, 1fr); }
+.admin-quick-offer { max-width: 760px; margin-inline: auto; }
+.admin-quick-offer .button-primary { justify-self: start; min-width: 180px; }
+.admin-quick-prices { display: grid; gap: 12px; padding: 14px; border: 1px solid var(--line); border-radius: 9px; }
+.admin-field-error { margin-top: -10px; color: #a32828; font-size: 12px; line-height: 1.4; }
+.admin-quick-offer [aria-invalid=true] { border-color: #a32828; }
 .admin-offers-panel, .admin-offers-list { padding: 24px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
 .admin-offers-panel { display: grid; gap: 14px; }
 .admin-offers-login { width: 100%; max-width: 430px; margin-inline: auto; }

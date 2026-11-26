@@ -2,7 +2,18 @@ import { randomUUID } from 'node:crypto'
 import { readFile, rename, writeFile, mkdir, unlink } from 'node:fs/promises'
 import path from 'node:path'
 
-export const categories = Object.freeze(['Filamentos', 'Impressoras 3D', 'Bicos e hotends', 'Peças de reposição', 'Ferramentas', 'Acessórios', 'Manutenção', 'Outros'])
+export const categories = Object.freeze(['impressoras-3d', 'filamentos', 'pecas-reposicao', 'acessorios-ferramentas', 'resinas', 'kits-combos'])
+export const legacyCategories = Object.freeze(['Filamentos', 'Impressoras 3D', 'Bicos e hotends', 'Peças de reposição', 'Ferramentas', 'Acessórios', 'Manutenção', 'Outros'])
+const categoryLabels = Object.freeze({ 'impressoras-3d': 'Impressoras 3D', filamentos: 'Filamentos', 'pecas-reposicao': 'Peças e reposição', 'acessorios-ferramentas': 'Acessórios e ferramentas', resinas: 'Resinas', 'kits-combos': 'Kits e combos' })
+const legacyCategoryIds = Object.freeze({ 'Impressoras 3D': 'impressoras-3d', Filamentos: 'filamentos', 'Bicos e hotends': 'pecas-reposicao', 'Peças de reposição': 'pecas-reposicao', Ferramentas: 'acessorios-ferramentas', Acessórios: 'acessorios-ferramentas' })
+export const categoryLabel = (value) => categoryLabels[value] || value
+export function categoryValues(value) {
+  if (!value) return null
+  const id = legacyCategoryIds[value] || value
+  if (categories.includes(id)) return [id, ...Object.keys(legacyCategoryIds).filter((legacy) => legacyCategoryIds[legacy] === id)]
+  if (legacyCategories.includes(value)) return [value]
+  throw new CatalogError('Categoria inválida.')
+}
 export const marketplaces = Object.freeze(['mercado_livre', 'shopee', 'amazon'])
 const priceMaxAgeMs = 24 * 60 * 60 * 1000
 const allowedHosts = {
@@ -61,7 +72,7 @@ export function validateProduct(input, previous = {}) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new CatalogError('Produto inválido.')
   const name = text(input.name, 'Nome', 140, 3)
   const description = optional(input.description, 'Descrição', 500)
-  if (!categories.includes(input.category)) throw new CatalogError('Categoria inválida.')
+  if (![...categories, ...legacyCategories].includes(input.category)) throw new CatalogError('Categoria inválida.')
   const keywords = input.keywords ?? []
   if (!Array.isArray(keywords) || keywords.length > 10) throw new CatalogError('Termos de busca inválidos.')
   const cleanKeywords = keywords.map((keyword) => text(keyword, 'Termo de busca', 40, 1))
@@ -81,6 +92,7 @@ export function validateOffer(input, products, previous = {}) {
   const active = boolean(input.active, 'Status')
   if (active && !affiliateConfirmed) throw new CatalogError('Confirme que o link foi gerado na sua conta de afiliado antes de ativar.')
   const priceCents = input.priceCents ?? null
+  const originalPriceCents = input.originalPriceCents ?? null
   let priceDisplayAuthorized = false
   let priceSource = ''
   let priceUpdatedAt = null
@@ -92,11 +104,34 @@ export function validateOffer(input, products, previous = {}) {
     priceSource = text(input.priceSource, 'Origem do preço', 160, 3)
     priceUpdatedAt = date(input.priceUpdatedAt, 'Data do preço')
   }
+  if (originalPriceCents !== null && (!Number.isSafeInteger(originalPriceCents) || priceCents === null || originalPriceCents <= priceCents)) throw new CatalogError('Preço original deve ser maior que o preço por.')
   const availability = input.availability ?? 'unknown'
   if (!['unknown', 'available', 'unavailable'].includes(availability)) throw new CatalogError('Disponibilidade inválida.')
   if (input.marketplace === 'amazon' && availability !== 'unknown') throw new CatalogError('Disponibilidade Amazon exige integração oficial específica; cadastro manual desabilitado.')
   const availabilityConfirmedAt = availability === 'unknown' ? null : date(input.availabilityConfirmedAt, 'Data da disponibilidade')
-  return { ...previous, productId: input.productId, marketplace: input.marketplace, affiliateUrl, affiliateConfirmed, active, priceCents, priceDisplayAuthorized, priceSource, priceUpdatedAt, availability, availabilityConfirmedAt }
+  return { ...previous, productId: input.productId, marketplace: input.marketplace, affiliateUrl, affiliateConfirmed, active, priceCents, originalPriceCents, priceDisplayAuthorized, priceSource, priceUpdatedAt, availability, availabilityConfirmedAt }
+}
+
+export function parseReais(value, label) {
+  if (value === '' || value == null) return null
+  if (typeof value !== 'string' || !/^\d{1,7}(?:,\d{1,2})?$/.test(value.trim())) throw new CatalogError(`${label} inválido. Use reais e vírgula para centavos.`)
+  const [reais, cents = ''] = value.trim().split(',')
+  const amount = Number(reais) * 100 + Number(cents.padEnd(2, '0'))
+  if (!Number.isSafeInteger(amount) || amount < 1 || amount > 100000000) throw new CatalogError(`${label} inválido.`)
+  return amount
+}
+
+export function validateCompleteOffer(input, imageUrl = '') {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new CatalogError('Oferta inválida.')
+  const priceCents = parseReais(input.priceBy, 'Preço por')
+  const originalPriceCents = parseReais(input.priceFrom, 'Preço de')
+  if (input.marketplace === 'amazon' && (priceCents !== null || originalPriceCents !== null)) throw new CatalogError('Preços Amazon exigem integração oficial específica; cadastro manual desabilitado.')
+  if (originalPriceCents !== null && (priceCents === null || originalPriceCents <= priceCents)) throw new CatalogError('Preço de deve ser maior que o preço por.')
+  if (input.affiliateConfirmed !== true || (priceCents !== null && input.priceAuthorized !== true) || (imageUrl && input.imageAuthorized !== true)) throw new CatalogError('Confirme as declarações de link, preço e imagem antes de cadastrar.')
+  const product = validateProduct({ name: input.name, description: input.description ?? '', category: input.category, keywords: [], imageUrl, imageRightsSource: imageUrl ? 'Uso autorizado declarado pelo administrador no cadastro' : '', featured: false, active: true })
+  const offer = { marketplace: input.marketplace, affiliateUrl: input.affiliateUrl, affiliateConfirmed: true, active: true, priceCents, originalPriceCents, priceDisplayAuthorized: priceCents !== null, priceSource: priceCents !== null ? 'Preço informado pelo administrador no cadastro' : '', priceUpdatedAt: priceCents !== null ? new Date().toISOString() : null, availability: 'unknown', availabilityConfirmedAt: null }
+  validateAffiliateUrl(offer.affiliateUrl, offer.marketplace)
+  return { product, offer }
 }
 
 const publicPrice = (offer, now) => {
@@ -111,11 +146,11 @@ const safePublicOffer = (offer) => {
 export function listPublicOffers(data, params, now = Date.now()) {
   const query = String(params.get('q') || '').trim().toLocaleLowerCase('pt-BR').slice(0, 100)
   const marketplace = String(params.get('marketplace') || '')
-  const category = String(params.get('category') || '')
+  const category = String(params.get('categoria') ?? params.get('category') ?? '')
   const sort = String(params.get('sort') || 'recent')
   const page = Number(params.get('page') || 1)
   if (marketplace && !marketplaces.includes(marketplace)) throw new CatalogError('Marketplace inválido.')
-  if (category && !categories.includes(category)) throw new CatalogError('Categoria inválida.')
+  const categoryOptions = categoryValues(category)
   if (!['recent', 'name', 'price_asc', 'price_desc'].includes(sort)) throw new CatalogError('Ordenação inválida.')
   if (!Number.isSafeInteger(page) || page < 1) throw new CatalogError('Página inválida.')
   const productById = new Map(data.products.filter((p) => p.active && !p.deletedAt).map((p) => [p.id, p]))
@@ -123,9 +158,9 @@ export function listPublicOffers(data, params, now = Date.now()) {
     const product = productById.get(offer.productId)
     return {
       id: offer.id, productId: product.id, name: product.name, description: product.description,
-      category: product.category, imageUrl: /^\/offer-images\/[a-f0-9-]{36}\.(png|jpg|webp)$/.test(product.imageUrl || '') ? product.imageUrl : '', marketplace: offer.marketplace,
+      category: product.category, categoryLabel: categoryLabel(product.category), imageUrl: /^\/offer-images\/[a-f0-9-]{36}\.(png|jpg|webp)$/.test(product.imageUrl || '') ? product.imageUrl : '', marketplace: offer.marketplace,
       affiliateUrl: offer.affiliateUrl, featured: product.featured,
-      priceCents: publicPrice(offer, now), priceUpdatedAt: publicPrice(offer, now) ? offer.priceUpdatedAt : null,
+      priceCents: publicPrice(offer, now), originalPriceCents: publicPrice(offer, now) && offer.originalPriceCents > offer.priceCents ? offer.originalPriceCents : null, priceUpdatedAt: publicPrice(offer, now) ? offer.priceUpdatedAt : null,
       priceSource: publicPrice(offer, now) ? offer.priceSource : '',
       availability: offer.availabilityConfirmedAt && now - Date.parse(offer.availabilityConfirmedAt) <= priceMaxAgeMs ? offer.availability : 'unknown',
       createdAt: offer.createdAt, keywords: product.keywords,
@@ -134,9 +169,9 @@ export function listPublicOffers(data, params, now = Date.now()) {
   const availableCategories = [...new Set(items.map((item) => item.category))]
   const hasPrices = items.some((item) => item.priceCents !== null)
   const hasAmazon = items.some((item) => item.marketplace === 'amazon')
-  if (query) items = items.filter((item) => [item.name, item.description, item.category, ...item.keywords].some((part) => part.toLocaleLowerCase('pt-BR').includes(query)))
+  if (query) items = items.filter((item) => [item.name, item.description, item.category, item.categoryLabel, ...item.keywords].some((part) => part.toLocaleLowerCase('pt-BR').includes(query)))
   if (marketplace) items = items.filter((item) => item.marketplace === marketplace)
-  if (category) items = items.filter((item) => item.category === category)
+  if (categoryOptions) items = items.filter((item) => categoryOptions.includes(item.category))
   const minPrice = params.get('minPrice')
   const maxPrice = params.get('maxPrice')
   for (const [value, label] of [[minPrice, 'Preço mínimo'], [maxPrice, 'Preço máximo']]) {
@@ -151,7 +186,7 @@ export function listPublicOffers(data, params, now = Date.now()) {
       if (b.priceCents === null) return -1
       return (sort === 'price_asc' ? a.priceCents - b.priceCents : b.priceCents - a.priceCents) || a.id.localeCompare(b.id)
     }
-    return Date.parse(b.createdAt) - Date.parse(a.createdAt) || a.id.localeCompare(b.id)
+    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime() || a.id.localeCompare(b.id)
   })
   const total = items.length
   const pageSize = 12
@@ -186,7 +221,7 @@ export function listAdminRecords(data, kind, params) {
   const marketplace = String(params.get('marketplace') || '')
   if (marketplace && !marketplaces.includes(marketplace)) throw new CatalogError('Marketplace inválido.')
   const category = String(params.get('category') || '')
-  if (category && !categories.includes(category)) throw new CatalogError('Categoria inválida.')
+  if (category && ![...categories, ...legacyCategories].includes(category)) throw new CatalogError('Categoria inválida.')
   const productsById = new Map(data.products.map((product) => [product.id, product]))
   let items = data[kind].filter((item) => !item.deletedAt)
   if (kind === 'products') {

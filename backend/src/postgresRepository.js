@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import pg from 'pg'
-import { CatalogError, categories, marketplaces, normalizedName, validateOffer, validateProduct } from './catalog.js'
+import { CatalogError, categories, categoryValues, legacyCategories, marketplaces, normalizedName, validateCompleteOffer, validateOffer, validateProduct } from './catalog.js'
 
 const productColumns = `p.id, p.name, p.description, p.category, p.keywords, p.image_url AS "imageUrl", p.image_rights_source AS "imageRightsSource", p.featured, p.active, p.created_at AS "createdAt", p.updated_at AS "updatedAt", p.deleted_at AS "deletedAt"`
-const offerColumns = `o.id, o.product_id AS "productId", o.marketplace, o.affiliate_url AS "affiliateUrl", o.affiliate_confirmed AS "affiliateConfirmed", o.active, o.price_cents AS "priceCents", o.price_display_authorized AS "priceDisplayAuthorized", o.price_source AS "priceSource", o.price_updated_at AS "priceUpdatedAt", o.availability, o.availability_confirmed_at AS "availabilityConfirmedAt", o.created_at AS "createdAt", o.updated_at AS "updatedAt", o.deleted_at AS "deletedAt"`
+const offerColumns = `o.id, o.product_id AS "productId", o.marketplace, o.affiliate_url AS "affiliateUrl", o.affiliate_confirmed AS "affiliateConfirmed", o.active, o.price_cents AS "priceCents", o.original_price_cents AS "originalPriceCents", o.price_display_authorized AS "priceDisplayAuthorized", o.price_source AS "priceSource", o.price_updated_at AS "priceUpdatedAt", o.availability, o.availability_confirmed_at AS "availabilityConfirmedAt", o.created_at AS "createdAt", o.updated_at AS "updatedAt", o.deleted_at AS "deletedAt"`
 const publicBase = `FROM filamind_store.offers o JOIN filamind_store.products p ON p.id = o.product_id
   WHERE o.deleted_at IS NULL AND p.deleted_at IS NULL AND o.active AND p.active AND o.affiliate_confirmed
   AND NOT (o.availability = 'unavailable' AND o.availability_confirmed_at >= $1::timestamptz - interval '24 hours')
@@ -14,8 +14,12 @@ const priceExpression = `CASE WHEN o.price_display_authorized AND o.price_cents 
   AND o.price_updated_at BETWEEN $1::timestamptz - interval '24 hours' AND $1::timestamptz + interval '5 minutes'
   THEN o.price_cents ELSE NULL END`
 const visibleSql = `SELECT o.id, p.id AS "productId", p.name, p.description, p.category,
+  CASE p.category WHEN 'impressoras-3d' THEN 'Impressoras 3D' WHEN 'filamentos' THEN 'Filamentos'
+    WHEN 'pecas-reposicao' THEN 'Peças e reposição' WHEN 'acessorios-ferramentas' THEN 'Acessórios e ferramentas'
+    WHEN 'resinas' THEN 'Resinas' WHEN 'kits-combos' THEN 'Kits e combos' ELSE p.category END AS "categoryLabel",
   p.image_url AS "imageUrl", o.marketplace, o.affiliate_url AS "affiliateUrl", p.featured,
   ${priceExpression} AS "priceCents",
+  CASE WHEN ${priceExpression} IS NOT NULL AND o.original_price_cents > o.price_cents THEN o.original_price_cents ELSE NULL END AS "originalPriceCents",
   CASE WHEN ${priceExpression} IS NOT NULL THEN o.price_updated_at ELSE NULL END AS "priceUpdatedAt",
   CASE WHEN ${priceExpression} IS NOT NULL THEN o.price_source ELSE '' END AS "priceSource",
   CASE WHEN o.availability_confirmed_at >= $1::timestamptz - interval '24 hours'
@@ -56,28 +60,28 @@ export function createPostgresRepository(pool) {
   return {
     mode: 'postgres',
     async assertReady() {
-      const result = await pool.query('SELECT version FROM filamind_store.schema_migrations WHERE version = 1')
-      if (result.rowCount !== 1) throw new Error('Migração PostgreSQL 001 não aplicada.')
+      const result = await pool.query('SELECT version FROM filamind_store.schema_migrations WHERE version IN (1, 2, 3, 4) ORDER BY version')
+      if (result.rows.map(({ version }) => version).join(',') !== '1,2,3,4') throw new Error('Migrations PostgreSQL 001 a 004 não aplicadas.')
     },
     async read() { throw new CatalogError('Use as listagens paginadas no modo PostgreSQL.', 410) },
     async listPublic(params) {
       const page = positivePage(params)
       const marketplace = String(params.get('marketplace') || '')
-      const category = String(params.get('category') || '')
+      const category = String(params.get('categoria') ?? params.get('category') ?? '')
       const sort = String(params.get('sort') || 'recent')
       const minPrice = params.get('minPrice')
       const maxPrice = params.get('maxPrice')
       if (marketplace && !marketplaces.includes(marketplace)) throw new CatalogError('Marketplace inválido.')
-      if (category && !categories.includes(category)) throw new CatalogError('Categoria inválida.')
+      const categoryOptions = categoryValues(category)
       if (!['recent', 'name', 'price_asc', 'price_desc'].includes(sort)) throw new CatalogError('Ordenação inválida.')
       for (const [value, label] of [[minPrice, 'Preço mínimo'], [maxPrice, 'Preço máximo']]) {
         if (value !== null && (!/^\d+$/.test(value) || Number(value) > 100000000)) throw new CatalogError(`${label} inválido.`)
       }
       const query = String(params.get('q') || '').trim().slice(0, 100)
-      const values = [new Date(), like(query), marketplace, category, minPrice === null ? null : Number(minPrice), maxPrice === null ? null : Number(maxPrice)]
-      const filters = `WHERE ($2 = '%%' OR (name ILIKE $2 OR description ILIKE $2 OR category ILIKE $2 OR EXISTS (
+      const values = [new Date(), like(query), marketplace, categoryOptions, minPrice === null ? null : Number(minPrice), maxPrice === null ? null : Number(maxPrice)]
+      const filters = `WHERE ($2 = '%%' OR (name ILIKE $2 OR description ILIKE $2 OR category ILIKE $2 OR "categoryLabel" ILIKE $2 OR EXISTS (
         SELECT 1 FROM filamind_store.products kp WHERE kp.id = "productId" AND array_to_string(kp.keywords, ' ') ILIKE $2)))
-        AND ($3 = '' OR marketplace = $3) AND ($4 = '' OR category = $4)
+        AND ($3 = '' OR marketplace = $3) AND ($4::text[] IS NULL OR category = ANY($4::text[]))
         AND ($5::integer IS NULL OR "priceCents" >= $5) AND ($6::integer IS NULL OR "priceCents" <= $6)`
       const meta = await pool.query(`WITH visible AS (${visibleSql}) SELECT array_agg(DISTINCT category) AS categories,
         bool_or("priceCents" IS NOT NULL) AS "hasPrices", bool_or(marketplace = 'amazon') AS "hasAmazon" FROM visible`, [values[0]])
@@ -113,7 +117,7 @@ export function createPostgresRepository(pool) {
       const category = String(params.get('category') || '')
       const marketplace = String(params.get('marketplace') || '')
       const status = String(params.get('status') || '')
-      if (category && !categories.includes(category)) throw new CatalogError('Categoria inválida.')
+      if (category && ![...categories, ...legacyCategories].includes(category)) throw new CatalogError('Categoria inválida.')
       if (marketplace && !marketplaces.includes(marketplace)) throw new CatalogError('Marketplace inválido.')
       if (status && !['active', 'inactive'].includes(status)) throw new CatalogError('Status inválido.')
       const values = [like(query), category, marketplace, status]
@@ -139,6 +143,22 @@ export function createPostgresRepository(pool) {
       const table = kind === 'products' ? 'products' : 'offers'
       const columns = kind === 'products' ? productColumns : offerColumns
       return (await pool.query(`SELECT ${columns} FROM filamind_store.${table} ${kind === 'products' ? 'p' : 'o'} WHERE id = $1 AND deleted_at IS NULL`, [id])).rows[0] || null
+    },
+    async createCompleteOffer(input, imageUrl = '') {
+      const { product, offer } = validateCompleteOffer(input, imageUrl)
+      return inTransaction(pool, async (client) => {
+        const productId = randomUUID(), offerId = randomUUID(), now = new Date()
+        const createdProduct = (await client.query(`INSERT INTO filamind_store.products AS p
+          (id, name, name_key, description, category, keywords, image_url, image_rights_source, featured, active, created_at, updated_at)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11) RETURNING ${productColumns}`,
+        [productId, product.name, normalizedName(product.name), product.description, product.category, product.keywords, product.imageUrl, product.imageRightsSource, false, true, now])).rows[0]
+        const validated = validateOffer({ ...offer, productId }, [createdProduct])
+        const createdOffer = (await client.query(`INSERT INTO filamind_store.offers AS o
+          (id, product_id, marketplace, affiliate_url, affiliate_confirmed, active, price_cents, original_price_cents, price_display_authorized, price_source, price_updated_at, availability, availability_confirmed_at, created_at, updated_at)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$14) RETURNING ${offerColumns}`,
+        [offerId, productId, validated.marketplace, validated.affiliateUrl, true, true, validated.priceCents, validated.originalPriceCents, validated.priceDisplayAuthorized, validated.priceSource, validated.priceUpdatedAt, 'unknown', null, now])).rows[0]
+        return { product: createdProduct, offer: createdOffer }
+      })
     },
     async createProduct(input) {
       const product = validateProduct(input)
@@ -173,10 +193,10 @@ export function createPostgresRepository(pool) {
         const product = (await client.query(`SELECT ${productColumns} FROM filamind_store.products p WHERE p.id=$1 AND p.deleted_at IS NULL FOR KEY SHARE`, [input?.productId])).rows[0]
         const offer = validateOffer(input, product ? [product] : [])
         const now = new Date()
-        const values = [randomUUID(), offer.productId, offer.marketplace, offer.affiliateUrl, offer.affiliateConfirmed, offer.active, offer.priceCents, offer.priceDisplayAuthorized, offer.priceSource, offer.priceUpdatedAt, offer.availability, offer.availabilityConfirmedAt, now]
+        const values = [randomUUID(), offer.productId, offer.marketplace, offer.affiliateUrl, offer.affiliateConfirmed, offer.active, offer.priceCents, offer.originalPriceCents, offer.priceDisplayAuthorized, offer.priceSource, offer.priceUpdatedAt, offer.availability, offer.availabilityConfirmedAt, now]
         return (await client.query(`INSERT INTO filamind_store.offers AS o (id, product_id, marketplace, affiliate_url, affiliate_confirmed, active,
-          price_cents, price_display_authorized, price_source, price_updated_at, availability, availability_confirmed_at, created_at, updated_at)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$13) RETURNING ${offerColumns}`, values)).rows[0]
+          price_cents, original_price_cents, price_display_authorized, price_source, price_updated_at, availability, availability_confirmed_at, created_at, updated_at)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$14) RETURNING ${offerColumns}`, values)).rows[0]
       })
     },
     async updateOffer(id, input) {
@@ -185,10 +205,10 @@ export function createPostgresRepository(pool) {
         if (!current) throw new CatalogError('Oferta não encontrada.', 404)
         const product = (await client.query(`SELECT ${productColumns} FROM filamind_store.products p WHERE p.id=$1 AND p.deleted_at IS NULL FOR KEY SHARE`, [input?.productId])).rows[0]
         const offer = validateOffer(input, product ? [product] : [], current)
-        const values = [id, offer.productId, offer.marketplace, offer.affiliateUrl, offer.affiliateConfirmed, offer.active, offer.priceCents, offer.priceDisplayAuthorized, offer.priceSource, offer.priceUpdatedAt, offer.availability, offer.availabilityConfirmedAt]
+        const values = [id, offer.productId, offer.marketplace, offer.affiliateUrl, offer.affiliateConfirmed, offer.active, offer.priceCents, offer.originalPriceCents, offer.priceDisplayAuthorized, offer.priceSource, offer.priceUpdatedAt, offer.availability, offer.availabilityConfirmedAt]
         return (await client.query(`UPDATE filamind_store.offers AS o SET product_id=$2, marketplace=$3, affiliate_url=$4, affiliate_confirmed=$5,
-          active=$6, price_cents=$7, price_display_authorized=$8, price_source=$9, price_updated_at=$10, availability=$11,
-          availability_confirmed_at=$12, updated_at=now() WHERE id=$1 RETURNING ${offerColumns}`, values)).rows[0]
+          active=$6, price_cents=$7, original_price_cents=$8, price_display_authorized=$9, price_source=$10, price_updated_at=$11, availability=$12,
+          availability_confirmed_at=$13, updated_at=now() WHERE id=$1 RETURNING ${offerColumns}`, values)).rows[0]
       })
     },
     async deleteOffer(id) {

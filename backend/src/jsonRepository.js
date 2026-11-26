@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { CatalogError, adminSummary, assertUniqueOffer, assertUniqueProduct, createCatalogStore, listAdminRecords, listPublicOffers, validateOffer, validateProduct } from './catalog.js'
+import { CatalogError, adminSummary, assertUniqueOffer, assertUniqueProduct, createCatalogStore, listAdminRecords, listPublicOffers, validateCompleteOffer, validateOffer, validateProduct } from './catalog.js'
 
 export function createJsonRepository(catalogPath) {
   const store = createCatalogStore(catalogPath)
@@ -10,6 +10,17 @@ export function createJsonRepository(catalogPath) {
     summary: async () => adminSummary(await store.read()),
     list: async (kind, params) => listAdminRecords(await store.read(), kind, params),
     get: async (kind, id) => (await store.read())[kind].find((item) => item.id === id && !item.deletedAt) || null,
+    createCompleteOffer: (input, imageUrl = '') => store.mutate((data) => {
+      const { product, offer } = validateCompleteOffer(input, imageUrl)
+      assertUniqueProduct(data.products, product)
+      const now = new Date().toISOString()
+      const createdProduct = { ...product, id: randomUUID(), createdAt: now, updatedAt: now }
+      const createdOffer = { ...validateOffer({ ...offer, productId: createdProduct.id }, [createdProduct]), id: randomUUID(), createdAt: now, updatedAt: now }
+      assertUniqueOffer(data.offers, createdOffer)
+      data.products.push(createdProduct)
+      data.offers.push(createdOffer)
+      return { product: createdProduct, offer: createdOffer }
+    }),
     createProduct: (input) => store.mutate((data) => {
       const now = new Date().toISOString()
       const product = { ...validateProduct(input), id: randomUUID(), createdAt: now, updatedAt: now }

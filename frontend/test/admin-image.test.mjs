@@ -33,6 +33,8 @@ test('keeps the selected file and preview through validation, upload, save and e
     await page.goto(base + '/admin/ofertas/')
     await page.getByLabel('Código temporário').fill(access.code)
     await page.getByRole('button', { name: 'Acessar painel' }).click()
+    await page.locator('.admin-offers-advanced summary').click()
+    await page.getByRole('button', { name: 'Produto avulso' }).click()
     const form = page.locator('.admin-offers-forms form').first()
     await form.getByRole('heading', { name: 'Novo produto' }).waitFor()
     const blobBlockedByOldPolicy = await page.evaluate((encoded) => new Promise((resolve) => {
@@ -118,6 +120,7 @@ test('keeps the selected file and preview through validation, upload, save and e
     assert.equal(edited.products[0].imageUrl, uploadedPath)
     assert.equal(edited.offers[0].affiliateUrl, 'https://s.shopee.com.br/teste-local')
 
+    await page.getByRole('button', { name: 'Editar' }).first().click()
     await input.setInputFiles({ name: 'arquivo.txt', mimeType: 'text/plain', buffer: Buffer.from('não é uma imagem') })
     assert.equal((await selected()).name, 'arquivo.txt')
     assert.match(await form.locator('.admin-offers-image-status').innerText(), /PNG, JPEG ou WebP/)
