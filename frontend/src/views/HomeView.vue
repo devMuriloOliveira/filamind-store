@@ -8,7 +8,7 @@ import SignupSection from '../components/home/SignupSection.vue'
 </script>
 
 <template>
-  <main id="conteudo">
+  <main id="conteudo" class="home-page">
     <HeroSection />
     <BenefitsSection />
     <FeaturesSection />

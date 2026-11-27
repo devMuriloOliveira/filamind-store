@@ -12,16 +12,18 @@ import BaseButton from '../ui/BaseButton.vue'
             <div class="plan-intro"><h3>Gratuito</h3><p>Comece a organizar sua produção e conheça o Filamind.</p></div>
             <p class="plan-price">R$ 0 <small>gratuito</small></p>
             <BaseButton :href="systemUrl" variant="secondary">Começar grátis</BaseButton>
-            <p class="plan-summary">Até 5 produtos cadastrados, calculadora de custos e operações básicas. Ao atingir o limite, conheça o PRO.</p>
+            <ul class="plan-points"><li>Calculadora de custos</li><li>Vendas, despesas e estoque</li><li>Cadastro de clientes e produtos</li></ul>
           </article>
           <article class="plan-card plan-pro">
             <div class="plan-intro"><h3>PRO</h3><p>Mais recursos para acompanhar e gerenciar seu negócio de impressão 3D.</p></div>
             <p class="plan-price">R$ 19,90 <small>/mês</small></p>
             <BaseButton :href="proUrl">Assinar PRO</BaseButton>
-            <p class="plan-summary">Inclui os recursos do Gratuito, integração com marketplaces e conexão de impressoras via Agent. Algumas conexões dependem de configuração; Shopee e Amazon estão em desenvolvimento.</p>
+            <ul class="plan-points"><li>Recursos do Gratuito</li><li>Relatórios e exportação financeira avançada</li><li>Equipe de até 8 usuários</li><li>Conexão de impressoras via Agent, mediante instalação</li></ul>
           </article>
         </div>
         <p class="plan-note" id="pro-price-note"><span>PRO: cobrança recorrente mensal pelo Mercado Pago. Para assinar, entre ou crie sua conta e acesse Minha conta → Assinatura. O cancelamento da renovação é solicitado na plataforma; o acesso PRO continua até o fim do período pago. Consulte <RouterLink to="/reembolso/">cancelamento e reembolso</RouterLink>. Esta página não processa pagamentos.</span></p>
+        <details class="plan-details">
+          <summary>Ver comparação completa dos planos</summary>
         <div class="plan-comparison-wrap">
           <table class="plan-comparison">
             <caption>Recursos e limites configurados nos planos</caption>
@@ -42,6 +44,7 @@ import BaseButton from '../ui/BaseButton.vue'
             </tbody>
           </table>
         </div>
+        </details>
         <p class="plan-note">O limite de 5 produtos é a regra comercial informada para o Gratuito; a configuração local do sistema principal ainda registra 10 e precisa ser alinhada antes da publicação. “Sem cota numérica” descreve o plano PRO no código examinado; não é promessa de uso ilimitado. A disponibilidade efetiva das integrações deve ser confirmada no ambiente de uso.</p>
       </div>
     </section>

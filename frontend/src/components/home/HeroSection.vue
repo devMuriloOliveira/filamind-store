@@ -4,40 +4,34 @@ import { systemUrl, videoPath, videoPoster } from '../../config.js'
 import BaseButton from '../ui/BaseButton.vue'
 
 const videoAvailable = ref(/^\/[^/]/.test(videoPath))
-const videoMessage = ref('O vídeo do Filamind estará disponível em breve.')
-const onVideoError = () => {
-  videoAvailable.value = false
-  videoMessage.value = 'O vídeo está indisponível no momento.'
-}
+const onVideoError = () => { videoAvailable.value = false }
 </script>
 
 <template>
-<section class="hero" aria-labelledby="hero-title">
-      <div class="page-container hero-inner">
-        <div class="hero-message">
-          <p class="eyebrow">GESTÃO PARA IMPRESSÃO 3D</p>
-          <h1 id="hero-title">Deixe as planilhas para trás. Gerencie suas impressões 3D <span>com mais controle.</span></h1>
-          <p class="hero-lead">Calcule custos, organize suas vendas e acompanhe os resultados do seu negócio de impressão 3D em um só lugar.</p>
-          <div class="hero-actions">
-            <BaseButton :href="systemUrl">Começar grátis <img src="/assets/figma/desktop-arrow-right.svg" alt="" width="17" height="17"></BaseButton>
-            <a class="button button-secondary" href="#funcionalidades">Conhecer a plataforma</a>
-          </div>
-          <p class="hero-assurances">Plano gratuito disponível. O cadastro acontece na plataforma Filamind.</p>
+  <section class="hero" aria-labelledby="hero-title">
+    <div class="page-container hero-inner">
+      <div class="hero-message">
+        <p class="eyebrow">GESTÃO PARA NEGÓCIOS DE IMPRESSÃO 3D</p>
+        <h1 id="hero-title">Controle seus custos. Organize suas vendas. <span>Faça sua impressão 3D crescer.</span></h1>
+        <p class="hero-lead">Calcule o preço das suas peças, acompanhe pedidos, controle materiais e gerencie sua produção em um só lugar.</p>
+        <div class="hero-actions">
+          <BaseButton :href="systemUrl">Começar grátis</BaseButton>
+          <a class="button button-secondary" href="#funcionalidades">Explorar funcionalidades</a>
         </div>
-
-        <div class="product-preview" aria-label="Demonstração em vídeo do Filamind">
-          <div class="product-frame">
-            <div class="video-stage" id="video-stage">
-              <video v-if="videoAvailable" id="product-video" :src="videoPath" :poster="videoPoster || undefined" controls preload="none" playsinline aria-label="Vídeo de demonstração do Filamind" @error="onVideoError"></video>
-              <div v-else class="video-pending" id="video-pending" role="status">
-                <span class="video-pending-icon" aria-hidden="true">▶</span>
-                <strong>Demonstração em vídeo</strong>
-                <p>{{ videoMessage }}</p>
-              </div>
-            </div>
-          </div>
-          <p class="preview-note">A demonstração será publicada quando houver um vídeo autorizado.</p>
-        </div>
+        <p class="hero-assurances">Plano gratuito disponível. Cadastro na plataforma Filamind.</p>
       </div>
-    </section>
+      <figure class="product-preview">
+        <div class="capture-shell capture-shell-hero">
+          <div class="capture-bar"><span>Filamind</span><span>Visão do produto</span></div>
+          <video v-if="videoAvailable" :src="videoPath" :poster="videoPoster || undefined" controls preload="none" playsinline aria-label="Vídeo de demonstração do Filamind" @error="onVideoError"></video>
+          <div v-else class="capture-empty" role="img" aria-label="Espaço reservado para captura real do dashboard Filamind">
+            <span class="capture-mark">F</span>
+            <strong>O Filamind por dentro</strong>
+            <span>Captura real do dashboard em preparação</span>
+          </div>
+        </div>
+        <figcaption>Visão do sistema — inserir captura autorizada do dashboard antes da publicação.</figcaption>
+      </figure>
+    </div>
+  </section>
 </template>
